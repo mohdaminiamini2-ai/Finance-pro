@@ -43,6 +43,10 @@ const L={
   recentTx:"Recent Transactions",quickActions:"Quick Actions",
   cashRegister:"Cash Register",cashFlow:"Cash Flow",
   debtorsCreditors:"Debtors & Creditors",
+  purchaseInv:"Purchase Invoices",
+  quotations:"Quotations",
+  recurring:"Recurring Expenses",
+  salesReturn:"Sales Return",
   debts:"Debts",
   iOwe:"I Owe",
   theyOwe:"They Owe Me",
@@ -96,6 +100,10 @@ const L={
   recentTx:"آخرین تراکنش‌ها",quickActions:"اقدامات سریع",
   cashRegister:"صندوق کاشیر",cashFlow:"جریان نقدی",
   debtorsCreditors:"بدهکار و طلبکار",
+  purchaseInv:"فاکتورهای خرید",
+  quotations:"پیش‌فاکتورها",
+  recurring:"هزینه‌های ثابت",
+  salesReturn:"برگشت فروش",
   debts:"بدهی‌ها و طلب‌ها",
   iOwe:"بدهی من",
   theyOwe:"طلب من",
@@ -125,7 +133,8 @@ const S={
   aiKey:localStorage.getItem("aiKey")||"",
   page:"dashboard",
   user:null,
-  accounts:[],transactions:[],invoices:[],products:[],customers:[],suppliers:[],budgets:[],goals:[],vouchers:[],cheques_in:[],cheques_out:[],denominations:{},debts:[],
+  accounts:[],transactions:[],invoices:[],products:[],customers:[],suppliers:[],budgets:[],goals:[],vouchers:[],cheques_in:[],cheques_out:[],denominations:{},debts:[],purchase_invoices:[],quotations:[],sales_returns:[],recurring_expenses:[],
+  pInvItems:[],qItems:[],
   profile:JSON.parse(localStorage.getItem("profile")||"{}"),
   invItems:[],cart:[],searchQ:"",pillFilter:"all",
   dateFilter:"all",dateFrom:"",dateTo:"",
@@ -377,13 +386,13 @@ async function doAuth(mode){
   if(error){errEl.textContent=t("authErr");btn.disabled=false;btn.textContent=t(mode==="signin"?"signIn":"signUp");return;}
   S.user=data.user;await loadAll();buildShell();render(S.page);
 }
-async function signOut(){await sb.auth.signOut();S.user=null;["accounts","transactions","invoices","products","customers","suppliers","budgets","goals","vouchers","cheques_in","cheques_out","debts"].forEach(k=>S[k]=[]);S.denominations={};renderAuth();}
+async function signOut(){await sb.auth.signOut();S.user=null;["accounts","transactions","invoices","products","customers","suppliers","budgets","goals","vouchers","cheques_in","cheques_out","debts","purchase_invoices","quotations","sales_returns","recurring_expenses"].forEach(k=>S[k]=[]);S.denominations={};renderAuth();}
 
 async function loadAll(){
   if(!S.user)return;
   const uid=S.user.id;
   try{
-    const tabs=["accounts","transactions","invoices","products","customers","suppliers","budgets","goals","vouchers","cheques_in","cheques_out","debts"];
+    const tabs=["accounts","transactions","invoices","products","customers","suppliers","budgets","goals","vouchers","cheques_in","cheques_out","debts","purchase_invoices","quotations","sales_returns","recurring_expenses"];
     const res=await Promise.all(tabs.map(tn=>sb.from(tn).select("*").eq("user_id",uid).order("created_at",{ascending:false})));
     tabs.forEach((tn,i)=>{S[tn]=res[i].data||[];});
     // Load denominations
@@ -404,7 +413,7 @@ function nav(page){
   closeSidebar();render(page);window.scrollTo(0,0);
 }
 function render(page){
-  const map={dashboard:rDash,cashier:rCashier,pos:rPOS,accounts:rAcc,transactions:rTx,invoices:rInv,vouchers:rVouchers,chequesIn:rChIn,chequesOut:rChOut,inventory:rProd,customers:rCust,suppliers:rSupp,debtorsCreditors:rDebtCred,reports:rRep,budgets:rBud,goals:rGoal,ai:rAI,settings:rSet};
+  const map={dashboard:rDash,cashier:rCashier,pos:rPOS,accounts:rAcc,transactions:rTx,invoices:rInv,purchaseInv:rPInv,quotations:rQuote,vouchers:rVouchers,chequesIn:rChIn,chequesOut:rChOut,inventory:rProd,customers:rCust,suppliers:rSupp,debtorsCreditors:rDebtCred,recurring:rRecurring,reports:rRep,budgets:rBud,goals:rGoal,ai:rAI,settings:rSet};
   map[page]?.();
 }
 async function refreshApp(){toast("Refreshing...","info");await loadAll();render(S.page);toast("Refreshed ✓","ok");}
@@ -1308,7 +1317,14 @@ function showAddInv(){
     ${S.products.length===0?`<div class="alert alert-amber">⚠️ No products in inventory. <span style="text-decoration:underline;cursor:pointer;" onclick="closeModal(true);nav('inventory')">Add products first</span></div>`:`<div class="search-box" style="margin-bottom:8px;"><span class="search-icon">🔍</span><input class="fc" id="prodSearch" placeholder="Search product to add..." oninput="searchInvProd(this.value)"/></div>
     <div id="prodResults" style="background:var(--glass);border-radius:8px;max-height:200px;overflow-y:auto;display:none;margin-bottom:10px;"></div>`}
     <div class="fgrid" style="margin-top:14px;">
-      <div class="fg"><label class="fl">${t("tax")}</label><input class="fc" type="number" id="invtax" value="0" oninput="calcInv()"/></div>
+      <div class="fg"><label class="fl">${t("tax")} (%)</label>
+        <input class="fc" type="number" id="invtax" value="${localStorage.getItem("defaultTax")||"0"}" min="0" max="100" step="0.01" oninput="calcInv()"/>
+        <div style="display:flex;gap:4px;margin-top:4px;flex-wrap:wrap;">
+          <button class="pill" type="button" onclick="setInvTax(0)">0%</button>
+          <button class="pill" type="button" onclick="setInvTax(5)">UAE 5%</button>
+          <button class="pill" type="button" onclick="setInvTax(9)">9%</button>
+        </div>
+      </div>
       <div class="fg"><label class="fl">${t("discount")}</label><input class="fc" type="number" id="invdisc" value="0" oninput="calcInv()"/></div>
       <div class="fg"><label class="fl">${t("paymentMode")}</label><select class="fc" id="invpm"><option value="cash">${t("cash")}</option><option value="card">${t("card")}</option><option value="credit">${t("credit")}</option></select></div>
       <div class="fg"><label class="fl">${t("account")}</label><select class="fc" id="invacc">${accOpts}</select></div>
@@ -1377,6 +1393,7 @@ function rII(){
     </div>`).join("");
 }
 function calcII(i){S.invItems[i].total=S.invItems[i].qty*S.invItems[i].unit_price;calcInv();rII();}
+function setInvTax(v){if($("invtax")){$("invtax").value=v;calcInv();}}
 function calcInv(){
   const sub=S.invItems.reduce((s,it)=>s+(it.total||0),0);
   const tax=sub*(+$("invtax")?.value||0)/100;const disc=sub*(+$("invdisc")?.value||0)/100;
@@ -1481,28 +1498,162 @@ function showInvDetail(id){
 }
 function printInv(id){
   const inv=S.invoices.find(x=>x.id===id);if(!inv)return;
-  const items=(inv.items||[]).map(it=>`<tr><td>${it.name}</td><td>${it.qty}</td><td>${fmN(it.unit_price)}</td><td>${fmN(it.total)}</td></tr>`).join("");
+  const cust=getCust(inv.customer_id);
+  const logo=localStorage.getItem("companyLogo")||"";
+  const items=(inv.items||[]).map((it,i)=>`<tr style="background:${i%2?"#f9fafb":"#fff"};"><td style="padding:12px;border-bottom:1px solid #e5e7eb;">${it.name}</td><td style="padding:12px;text-align:center;border-bottom:1px solid #e5e7eb;">${it.qty}</td><td style="padding:12px;text-align:right;border-bottom:1px solid #e5e7eb;">${fmN(it.unit_price)}</td><td style="padding:12px;text-align:right;border-bottom:1px solid #e5e7eb;font-weight:600;">${fmN(it.total)}</td></tr>`).join("");
   const win=window.open("","_blank");
-  win.document.write(`<html><head><title>${inv.invoice_no}</title><style>body{font-family:sans-serif;padding:30px;color:#000;}table{width:100%;border-collapse:collapse;margin-top:20px;}th,td{padding:10px;border-bottom:1px solid #ddd;text-align:left;}th{background:#f5f5f5;}h1{color:#3b82f6;}.total{font-size:20px;font-weight:bold;text-align:right;margin-top:20px;}</style></head><body>
-    ${S.profile.name?`<div><h2>${S.profile.name}</h2><div>${S.profile.address||""}</div></div>`:""}
-    <h1>INVOICE ${inv.invoice_no}</h1><p>Date: ${fmD(inv.date)} | Customer: ${getCustName(inv.customer_id)}</p>
-    <table><thead><tr><th>Item</th><th>Qty</th><th>Price</th><th>Total</th></tr></thead><tbody>${items}</tbody></table>
-    <div class="total">Total: ${fmA(inv.grand_total||0,inv.currency)}</div></body></html>`);
-  win.document.close();setTimeout(()=>win.print(),400);
+  win.document.write(`<!DOCTYPE html><html><head><title>${inv.invoice_no}</title>
+    <meta charset="utf-8">
+    <style>
+      *{box-sizing:border-box;margin:0;padding:0;}
+      body{font-family:-apple-system,'Helvetica Neue',sans-serif;color:#1f2937;background:#fff;padding:0;}
+      .wrap{max-width:800px;margin:0 auto;padding:40px;}
+      .head{display:flex;justify-content:space-between;align-items:flex-start;padding-bottom:30px;border-bottom:3px solid #3b82f6;margin-bottom:30px;}
+      .comp{flex:1;}
+      .comp-name{font-size:24px;font-weight:700;color:#1f2937;margin-bottom:6px;}
+      .comp-info{font-size:12px;color:#6b7280;line-height:1.6;}
+      .logo{max-width:120px;max-height:80px;object-fit:contain;}
+      .doc-title{text-align:right;}
+      .doc-title h1{font-size:36px;font-weight:300;color:#3b82f6;letter-spacing:2px;margin-bottom:4px;}
+      .doc-no{font-size:13px;color:#6b7280;}
+      .meta{display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:30px;}
+      .meta-box{background:#f9fafb;padding:16px;border-radius:8px;border-left:3px solid #3b82f6;}
+      .meta-label{font-size:11px;color:#6b7280;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;font-weight:600;}
+      .meta-value{font-size:14px;color:#1f2937;line-height:1.5;}
+      table{width:100%;border-collapse:collapse;margin-bottom:20px;border-radius:8px;overflow:hidden;}
+      thead{background:#3b82f6;color:#fff;}
+      th{padding:14px 12px;font-size:12px;text-align:left;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;}
+      th.center{text-align:center;}
+      th.right{text-align:right;}
+      .totals{margin-left:auto;width:300px;background:#f9fafb;padding:20px;border-radius:8px;}
+      .totals-row{display:flex;justify-content:space-between;padding:6px 0;font-size:14px;color:#4b5563;}
+      .totals-grand{display:flex;justify-content:space-between;padding-top:12px;margin-top:12px;border-top:2px solid #3b82f6;font-size:20px;font-weight:700;color:#3b82f6;}
+      .footer{margin-top:40px;padding-top:20px;border-top:1px solid #e5e7eb;font-size:11px;color:#6b7280;text-align:center;}
+      .note{margin-top:20px;padding:12px;background:#fef3c7;border-radius:6px;font-size:12px;color:#92400e;}
+      @media print {body{padding:0;} .no-print{display:none;}}
+    </style></head><body>
+    <div class="wrap">
+      <div class="head">
+        <div class="comp">
+          ${logo?`<img src="${logo}" class="logo" style="margin-bottom:12px;display:block;"/>`:""}
+          <div class="comp-name">${S.profile.name||"Your Business"}</div>
+          <div class="comp-info">
+            ${S.profile.address?`${S.profile.address}<br/>`:""}
+            ${S.profile.phone?`📞 ${S.profile.phone}<br/>`:""}
+            ${S.profile.email?`✉ ${S.profile.email}<br/>`:""}
+            ${localStorage.getItem("companyTRN")?`TRN: ${localStorage.getItem("companyTRN")}`:""}
+          </div>
+        </div>
+        <div class="doc-title">
+          <h1>INVOICE</h1>
+          <div class="doc-no">#${inv.invoice_no}</div>
+        </div>
+      </div>
+      
+      <div class="meta">
+        <div class="meta-box">
+          <div class="meta-label">Bill To</div>
+          <div class="meta-value">
+            <strong>${cust?.name||"—"}</strong><br/>
+            ${cust?.customer_code?`Code: ${cust.customer_code}<br/>`:""}
+            ${cust?.phone?`${cust.phone}<br/>`:""}
+            ${cust?.email?`${cust.email}<br/>`:""}
+            ${cust?.address?`${cust.address}<br/>`:""}
+            ${cust?.trn_number?`TRN: ${cust.trn_number}`:""}
+          </div>
+        </div>
+        <div class="meta-box">
+          <div class="meta-label">Invoice Details</div>
+          <div class="meta-value">
+            <strong>Date:</strong> ${fmD(inv.date)}<br/>
+            ${inv.due_date?`<strong>Due:</strong> ${fmD(inv.due_date)}<br/>`:""}
+            ${inv.reference_no?`<strong>Ref:</strong> ${inv.reference_no}<br/>`:""}
+            <strong>Status:</strong> ${inv.status||"—"}
+          </div>
+        </div>
+      </div>
+      
+      <table>
+        <thead><tr>
+          <th>Description</th>
+          <th class="center">Qty</th>
+          <th class="right">Unit Price</th>
+          <th class="right">Amount</th>
+        </tr></thead>
+        <tbody>${items}</tbody>
+      </table>
+      
+      <div class="totals">
+        <div class="totals-row"><span>Subtotal:</span><span>${fmN(inv.subtotal||0)}</span></div>
+        ${inv.tax_amount?`<div class="totals-row"><span>Tax (${inv.tax_pct||0}%):</span><span>${fmN(inv.tax_amount)}</span></div>`:""}
+        ${inv.disc_amount?`<div class="totals-row"><span>Discount (${inv.disc_pct||0}%):</span><span>−${fmN(inv.disc_amount)}</span></div>`:""}
+        <div class="totals-grand"><span>TOTAL ${inv.currency||"AED"}:</span><span>${fmN(inv.grand_total||0)}</span></div>
+      </div>
+      
+      ${inv.note?`<div class="note">${inv.note}</div>`:""}
+      
+      <div class="footer">
+        Thank you for your business!<br/>
+        Generated on ${new Date().toLocaleString()}
+      </div>
+    </div>
+    <script>setTimeout(()=>window.print(),400);</script>
+    </body></html>`);
+  win.document.close();
 }
 function pdfInv(id){
   const inv=S.invoices.find(x=>x.id===id);if(!inv)return;
   try{
     const {jsPDF}=window.jspdf;const doc=new jsPDF();let y=20;
-    if(S.profile.name){doc.setFontSize(14);doc.setFont("helvetica","bold");doc.text(S.profile.name,20,y);y+=8;}
-    doc.setFontSize(20);doc.setTextColor(59,130,246);doc.text("INVOICE",20,y);y+=10;
-    doc.setFontSize(11);doc.setTextColor(0,0,0);
-    doc.text(`No: ${inv.invoice_no}`,20,y);doc.text(`Date: ${fmD(inv.date)}`,120,y);y+=8;
-    doc.text(`Customer: ${getCustName(inv.customer_id)}`,20,y);y+=12;
-    (inv.items||[]).forEach(it=>{doc.text(`${it.name} (${it.qty} × ${fmN(it.unit_price)})`,20,y);doc.text(fmN(it.total),165,y);y+=7;});
-    y+=8;doc.setFontSize(14);doc.setFont("helvetica","bold");doc.text(`Total: ${fmA(inv.grand_total||0,inv.currency)}`,120,y);
+    // Header
+    if(S.profile.name){doc.setFontSize(16);doc.setFont("helvetica","bold");doc.text(S.profile.name,20,y);y+=6;}
+    if(S.profile.address){doc.setFontSize(9);doc.setFont("helvetica","normal");doc.setTextColor(100,100,100);doc.text(S.profile.address,20,y);y+=5;}
+    if(localStorage.getItem("companyTRN")){doc.setFontSize(9);doc.text(`TRN: ${localStorage.getItem("companyTRN")}`,20,y);y+=5;}
+    // Invoice title
+    doc.setFontSize(24);doc.setTextColor(59,130,246);doc.setFont("helvetica","bold");
+    doc.text("INVOICE",150,30);doc.setFontSize(10);doc.setTextColor(100,100,100);doc.text(`#${inv.invoice_no}`,150,36);
+    y=55;
+    // Bill to
+    const cust=getCust(inv.customer_id);
+    doc.setFontSize(9);doc.setTextColor(100,100,100);doc.text("BILL TO:",20,y);y+=5;
+    doc.setFontSize(11);doc.setTextColor(0,0,0);doc.setFont("helvetica","bold");doc.text(cust?.name||"—",20,y);y+=5;
+    doc.setFontSize(9);doc.setFont("helvetica","normal");
+    if(cust?.phone){doc.text(cust.phone,20,y);y+=4;}
+    if(cust?.trn_number){doc.text(`TRN: ${cust.trn_number}`,20,y);y+=4;}
+    // Invoice info
+    let yr=55;
+    doc.setFontSize(9);doc.setTextColor(100,100,100);doc.text("DATE:",130,yr);doc.setTextColor(0,0,0);doc.text(fmD(inv.date),155,yr);yr+=5;
+    if(inv.due_date){doc.setTextColor(100,100,100);doc.text("DUE:",130,yr);doc.setTextColor(0,0,0);doc.text(fmD(inv.due_date),155,yr);yr+=5;}
+    y=Math.max(y,yr)+10;
+    // Items table
+    doc.setFillColor(59,130,246);doc.rect(20,y,170,8,"F");
+    doc.setTextColor(255,255,255);doc.setFontSize(9);doc.setFont("helvetica","bold");
+    doc.text("ITEM",22,y+5.5);doc.text("QTY",120,y+5.5);doc.text("PRICE",140,y+5.5);doc.text("TOTAL",170,y+5.5);
+    y+=10;
+    doc.setTextColor(0,0,0);doc.setFont("helvetica","normal");
+    (inv.items||[]).forEach((it,i)=>{
+      if(i%2===0){doc.setFillColor(249,250,251);doc.rect(20,y-4,170,7,"F");}
+      doc.text(String(it.name||"").substring(0,40),22,y);
+      doc.text(String(it.qty||0),120,y);
+      doc.text(fmN(it.unit_price),140,y);
+      doc.text(fmN(it.total),170,y);
+      y+=7;
+    });
+    // Totals
+    y+=8;
+    doc.setFontSize(10);doc.setTextColor(100,100,100);
+    doc.text("Subtotal:",130,y);doc.setTextColor(0,0,0);doc.text(fmN(inv.subtotal||0),175,y);y+=6;
+    if(inv.tax_amount){doc.setTextColor(100,100,100);doc.text(`Tax (${inv.tax_pct}%):`,130,y);doc.setTextColor(0,0,0);doc.text(fmN(inv.tax_amount),175,y);y+=6;}
+    if(inv.disc_amount){doc.setTextColor(100,100,100);doc.text(`Discount:`,130,y);doc.setTextColor(0,0,0);doc.text("-"+fmN(inv.disc_amount),175,y);y+=6;}
+    // Grand total
+    y+=3;doc.setDrawColor(59,130,246);doc.setLineWidth(0.8);doc.line(125,y,190,y);y+=6;
+    doc.setFontSize(14);doc.setFont("helvetica","bold");doc.setTextColor(59,130,246);
+    doc.text(`TOTAL ${inv.currency||"AED"}:`,130,y);doc.text(fmN(inv.grand_total||0),175,y);
+    // Footer
+    doc.setFontSize(8);doc.setTextColor(150,150,150);doc.setFont("helvetica","italic");
+    doc.text("Thank you for your business!",105,280,{align:"center"});
     doc.save(`${inv.invoice_no}.pdf`);toast("PDF saved","ok");
-  }catch(e){toast("PDF error","err");}
+  }catch(e){console.error(e);toast("PDF error","err");}
 }
 
 // ── PRODUCTS ──
@@ -2066,6 +2217,442 @@ function showTopCustomers(){
   modal("⭐ Top Customers",`<div class="card">${rows}</div>`,`<button class="btn btn-secondary" onclick="closeModal(true)">${t("close")}</button>`,true);
 }
 
+// ── PURCHASE INVOICES ──
+function nextPInvNo(){
+  const nums=S.purchase_invoices.map(p=>{const m=String(p.invoice_no||"").match(/PINV-(\d+)/);return m?parseInt(m[1]):0;});
+  return "PINV-"+String(Math.max(0,...nums)+1).padStart(4,"0");
+}
+function rPInv(){
+  let pinvs=S.purchase_invoices;
+  const q=S.searchQ.toLowerCase();
+  if(q)pinvs=pinvs.filter(p=>(p.invoice_no||"").toLowerCase().includes(q)||getSuppName(p.supplier_id).toLowerCase().includes(q));
+  pinvs=applyDateFilter(pinvs);
+  const total=pinvs.reduce((s,p)=>s+(p.grand_total||0),0);
+  const list=pinvs.map(p=>`
+    <div class="list-item" onclick="showPInvDetail('${p.id}')">
+      <div class="list-icon" style="background:var(--amber-dim);color:var(--amber);">🛒</div>
+      <div class="list-content"><div class="list-title">${p.invoice_no||"—"}</div><div class="list-sub">${getSuppName(p.supplier_id)} · ${fmD(p.date)}</div></div>
+      <div class="list-right"><div class="list-amount" style="color:var(--red);">−${fmA(p.grand_total||0,p.currency)}</div></div>
+    </div>`).join("")||`<div class="empty"><div class="empty-icon">🛒</div><p>No purchase invoices</p></div>`;
+  $("p-purchaseInv").innerHTML=`
+    <div class="page-header"><div><div class="page-title">${t("purchaseInv")}</div><div class="page-sub">${pinvs.length} · Total: ${fmA(total)}</div></div>
+      <button class="btn btn-primary btn-sm" onclick="showAddPInv()">+ ${t("add")}</button></div>
+    <div class="search-box"><span class="search-icon">🔍</span><input class="fc" placeholder="Search by # or supplier..." oninput="S.searchQ=this.value;rPInv()" value="${S.searchQ}"/></div>
+    ${dateFilterHTML("rPInv")}
+    <div class="card">${list}</div>`;
+}
+function getSuppName(id){const s=S.suppliers.find(x=>x.id===id);return s?s.name:"—";}
+
+function showAddPInv(){
+  S.pInvItems=[];
+  const supOpts=S.suppliers.length?S.suppliers.map(s=>`<option value="${s.id}">${s.name}</option>`).join(""):`<option value="">⚠️ No suppliers - add one first</option>`;
+  const accOpts=S.accounts.map(a=>`<option value="${a.id}">${AICONS[a.type]} ${a.name}</option>`).join("");
+  const pNo=nextPInvNo();
+  modal("New Purchase Invoice",`
+    <div class="fgrid">
+      <div class="fg"><label class="fl">Invoice #</label><input class="fc" id="pinvno" value="${pNo}"/></div>
+      <div class="fg"><label class="fl">Supplier *</label><select class="fc" id="pinvsup">${supOpts}</select></div>
+      <div class="fg"><label class="fl">${t("date")}</label><input class="fc" type="date" id="pinvdate" value="${today()}" max="${today()}"/></div>
+      <div class="fg"><label class="fl">Reference #</label><input class="fc" id="pinvref" placeholder="Supplier invoice #"/></div>
+    </div>
+    <div style="font-size:11px;color:var(--text3);text-transform:uppercase;margin:14px 0 8px;">Items</div>
+    <div id="pitems"></div>
+    ${S.products.length===0?`<div class="alert alert-amber">⚠️ No products. <span style="text-decoration:underline;cursor:pointer;" onclick="closeModal(true);nav('inventory')">Add products first</span></div>`:`<div class="search-box" style="margin-bottom:8px;"><span class="search-icon">🔍</span><input class="fc" id="ppSearch" placeholder="Search product to add..." oninput="searchPInvProd(this.value)"/></div>
+    <div id="ppResults" style="background:var(--glass);border-radius:8px;max-height:200px;overflow-y:auto;display:none;margin-bottom:10px;"></div>`}
+    <div class="fgrid" style="margin-top:14px;">
+      <div class="fg"><label class="fl">${t("tax")} (%)</label><input class="fc" type="number" id="pinvtax" value="0" min="0" max="100" step="0.01" oninput="calcPInv()"/></div>
+      <div class="fg"><label class="fl">${t("discount")} (%)</label><input class="fc" type="number" id="pinvdisc" value="0" oninput="calcPInv()"/></div>
+      <div class="fg"><label class="fl">${t("paymentMode")}</label><select class="fc" id="pinvpm"><option value="cash">${t("cash")}</option><option value="card">${t("card")}</option><option value="credit">Credit</option></select></div>
+      <div class="fg"><label class="fl">${t("account")}</label><select class="fc" id="pinvacc">${accOpts}</select></div>
+    </div>
+    <div style="background:var(--glass);padding:14px;border-radius:10px;margin-top:12px;">
+      <div style="display:flex;justify-content:space-between;color:var(--text3);"><span>Subtotal</span><span id="p-sub">0</span></div>
+      <div style="display:flex;justify-content:space-between;color:var(--text3);"><span>Tax</span><span id="p-tax">0</span></div>
+      <div style="display:flex;justify-content:space-between;color:var(--text3);"><span>Discount</span><span id="p-disc">0</span></div>
+      <div style="display:flex;justify-content:space-between;padding-top:10px;border-top:1px solid var(--border);font-weight:700;font-size:17px;"><span>Grand Total</span><span id="p-grand" style="color:var(--accent);font-family:var(--mono);">0</span></div>
+    </div>`,
+    `<button class="btn btn-secondary" onclick="closeModal()">${t("cancel")}</button>
+     <button class="btn btn-primary" onclick="savePInv()">Save</button>`,true);
+  rPInvItems();calcPInv();
+}
+function searchPInvProd(q){
+  const res=$("ppResults");if(!res)return;
+  if(!q||q.length<1){res.style.display="none";return;}
+  const ql=q.toLowerCase();
+  const matches=S.products.filter(p=>p.name.toLowerCase().includes(ql)||(p.sku||"").toLowerCase().includes(ql)).slice(0,10);
+  if(matches.length===0){res.style.display="block";res.innerHTML=`<div style="padding:12px;color:var(--text3);text-align:center;">No products found</div>`;return;}
+  res.style.display="block";
+  res.innerHTML=matches.map(p=>`<div class="list-item" onclick="addPInvProd('${p.id}')" style="cursor:pointer;">
+    <div class="list-icon">📦</div>
+    <div class="list-content"><div class="list-title">${p.name}</div><div class="list-sub">${p.sku||"—"} · Cost: ${fmA(p.cost_price||0)}</div></div>
+  </div>`).join("");
+}
+function addPInvProd(pid){
+  const p=S.products.find(x=>x.id===pid);if(!p)return;
+  const ex=S.pInvItems.find(it=>it.product_id===pid);
+  if(ex){ex.qty++;ex.total=ex.qty*ex.unit_price;}
+  else S.pInvItems.push({product_id:pid,name:p.name,qty:1,unit_price:p.cost_price||0,total:p.cost_price||0});
+  if($("ppSearch"))$("ppSearch").value="";
+  if($("ppResults"))$("ppResults").style.display="none";
+  rPInvItems();calcPInv();
+}
+function rmPInvItem(i){S.pInvItems.splice(i,1);rPInvItems();calcPInv();}
+function rPInvItems(){
+  if(S.pInvItems.length===0){$("pitems").innerHTML=`<div style="text-align:center;padding:16px;color:var(--text3);font-size:12px;">Search and add products</div>`;return;}
+  $("pitems").innerHTML=S.pInvItems.map((it,i)=>`
+    <div style="background:var(--glass);padding:10px;border-radius:8px;margin-bottom:8px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+        <div style="font-weight:600;font-size:13px;">${it.name||"—"}</div>
+        <button class="btn btn-icon btn-danger btn-sm" onclick="rmPInvItem(${i})">✕</button>
+      </div>
+      <div class="fgrid">
+        <div class="fg" style="margin:0;"><label class="fl">Qty</label><input class="fc" type="number" value="${it.qty}" min="1" oninput="S.pInvItems[${i}].qty=+this.value;calcPInvItem(${i})"/></div>
+        <div class="fg" style="margin:0;"><label class="fl">Cost</label><input class="fc" type="number" value="${it.unit_price}" step="0.01" oninput="S.pInvItems[${i}].unit_price=+this.value;calcPInvItem(${i})"/></div>
+      </div>
+      <div style="text-align:right;margin-top:6px;color:var(--accent);font-family:var(--mono);font-weight:700;">= ${fmA(it.total)}</div>
+    </div>`).join("");
+}
+function calcPInvItem(i){S.pInvItems[i].total=S.pInvItems[i].qty*S.pInvItems[i].unit_price;calcPInv();rPInvItems();}
+function calcPInv(){
+  const sub=S.pInvItems.reduce((s,it)=>s+(it.total||0),0);
+  const tax=sub*(+$("pinvtax")?.value||0)/100;const disc=sub*(+$("pinvdisc")?.value||0)/100;
+  const grand=sub+tax-disc;
+  if($("p-sub"))$("p-sub").textContent=fmA(sub);
+  if($("p-tax"))$("p-tax").textContent=fmA(tax);
+  if($("p-disc"))$("p-disc").textContent=fmA(disc);
+  if($("p-grand"))$("p-grand").textContent=fmA(grand);
+}
+async function savePInv(){
+  if(!lockSave())return;
+  try{
+    if(S.pInvItems.length===0){toast("Add at least one item","err");return;}
+    const supId=$("pinvsup")?.value;
+    if(!supId){toast("Supplier required","err");return;}
+    const pDate=$("pinvdate")?.value||today();
+    if(pDate>today()){toast("Date cannot be in future","err");return;}
+    const pNo=$("pinvno")?.value;
+    if(pNo){const dup=S.purchase_invoices.find(p=>p.invoice_no===pNo);if(dup){toast("Number exists","err");return;}}
+    const sub=S.pInvItems.reduce((s,it)=>s+(it.total||0),0);
+    const taxP=+$("pinvtax")?.value||0,discP=+$("pinvdisc")?.value||0;
+    const tax=sub*taxP/100,disc=sub*discP/100,grand=sub+tax-disc;
+    if(grand>5000){if(!confirm(`Large amount: ${fmA(grand)}\n\nSure?`))return;}
+    const pm=$("pinvpm")?.value||"cash";
+    const accId=$("pinvacc")?.value||null;
+    const row={invoice_no:pNo,supplier_id:supId,date:pDate,currency:S.currency,payment_method:pm,tax_pct:taxP,disc_pct:discP,subtotal:sub,tax_amount:tax,disc_amount:disc,grand_total:grand,account_id:accId,status:"submitted",reference_no:$("pinvref")?.value||"",items:S.pInvItems};
+    const d=await ins("purchase_invoices",row);if(!d)return;
+    S.purchase_invoices.unshift(d);
+    // Update stock & cost prices
+    for(const it of S.pInvItems){
+      if(it.product_id){
+        const p=S.products.find(x=>x.id===it.product_id);
+        if(p){p.stock=(p.stock||0)+it.qty;p.cost_price=it.unit_price;await upd("products",p.id,{stock:p.stock,cost_price:p.cost_price});}
+      }
+    }
+    // If paid (not credit), update account & create transaction
+    if(pm!=="credit"&&accId){
+      const acc=getAcc(accId);
+      if(acc){
+        const isCredit=acc.type==="credit";
+        const delta=isCredit?grand:-grand; // Credit card: increase debt; other: decrease balance
+        acc.balance=(acc.balance||0)+delta;
+        await upd("accounts",accId,{balance:acc.balance});
+      }
+      const tx=await ins("transactions",{type:"expense",amount:grand,currency:S.currency,account_id:accId,category:"purchase",note:row.invoice_no,date:pDate});
+      if(tx)S.transactions.unshift(tx);
+    }
+    logAction("create","purchase_invoice",d.id,`${pNo} ${fmA(grand)}`);
+    closeModal(true);toast(t("saved"),"ok");render("purchaseInv");
+  }finally{unlockSave();}
+}
+function showPInvDetail(id){
+  const p=S.purchase_invoices.find(x=>x.id===id);if(!p)return;
+  const sup=S.suppliers.find(x=>x.id===p.supplier_id);
+  const itemRows=(p.items||[]).map(it=>`<tr><td style="padding:6px;">${it.name}</td><td style="padding:6px;text-align:center;">${it.qty}</td><td style="padding:6px;text-align:right;">${fmA(it.unit_price)}</td><td style="padding:6px;text-align:right;font-weight:700;">${fmA(it.total)}</td></tr>`).join("");
+  modal(p.invoice_no,`
+    <div style="background:var(--glass);padding:12px;border-radius:10px;margin-bottom:12px;">
+      <div style="display:flex;justify-content:space-between;font-size:12px;color:var(--text3);margin-bottom:6px;"><span>Supplier:</span><span style="color:var(--text);">${sup?.name||"—"}</span></div>
+      <div style="display:flex;justify-content:space-between;font-size:12px;color:var(--text3);margin-bottom:6px;"><span>Date:</span><span style="color:var(--text);">${fmD(p.date)}</span></div>
+      ${p.reference_no?`<div style="display:flex;justify-content:space-between;font-size:12px;color:var(--text3);"><span>Ref:</span><span style="color:var(--text);">${p.reference_no}</span></div>`:""}
+    </div>
+    <table style="width:100%;font-size:12px;background:var(--glass);border-radius:8px;overflow:hidden;">
+      <thead><tr style="background:rgba(255,255,255,.05);"><th style="padding:6px;text-align:left;">Item</th><th style="padding:6px;">Qty</th><th style="padding:6px;text-align:right;">Cost</th><th style="padding:6px;text-align:right;">Total</th></tr></thead>
+      <tbody>${itemRows}</tbody>
+    </table>
+    <div style="background:var(--glass);padding:12px;border-radius:8px;margin-top:12px;">
+      <div style="display:flex;justify-content:space-between;color:var(--text3);font-size:12px;"><span>Subtotal</span><span>${fmA(p.subtotal)}</span></div>
+      <div style="display:flex;justify-content:space-between;color:var(--text3);font-size:12px;"><span>Tax</span><span>${fmA(p.tax_amount)}</span></div>
+      <div style="display:flex;justify-content:space-between;color:var(--text3);font-size:12px;"><span>Discount</span><span>${fmA(p.disc_amount)}</span></div>
+      <div style="display:flex;justify-content:space-between;padding-top:8px;border-top:1px solid var(--border);font-weight:700;color:var(--accent);"><span>Total</span><span style="font-family:var(--mono);">${fmA(p.grand_total)}</span></div>
+    </div>`,
+    `<button class="btn btn-danger btn-sm" onclick="delPInv('${id}')">${t("delete")}</button>
+     <button class="btn btn-secondary" onclick="closeModal(true)">${t("close")}</button>`,true);
+}
+async function delPInv(id){
+  const p=S.purchase_invoices.find(x=>x.id===id);if(!p)return;
+  if(isLocked(p.date)){toast("Period locked","err");return;}
+  if(!confirm(`Delete ${p.invoice_no}?`))return;
+  // Reverse stock
+  for(const it of(p.items||[])){
+    if(it.product_id){
+      const prod=S.products.find(x=>x.id===it.product_id);
+      if(prod){prod.stock=Math.max(0,(prod.stock||0)-it.qty);await upd("products",prod.id,{stock:prod.stock});}
+    }
+  }
+  // Reverse account & transaction
+  if(p.account_id&&p.payment_method!=="credit"){
+    const acc=getAcc(p.account_id);
+    if(acc){
+      const isCredit=acc.type==="credit";
+      const reverse=isCredit?-p.grand_total:p.grand_total;
+      acc.balance=(acc.balance||0)+reverse;
+      await upd("accounts",p.account_id,{balance:acc.balance});
+    }
+    const linkedTx=S.transactions.filter(tx=>(tx.note||"")===p.invoice_no);
+    for(const tx of linkedTx){await del("transactions",tx.id);}
+    S.transactions=S.transactions.filter(tx=>(tx.note||"")!==p.invoice_no);
+  }
+  await del("purchase_invoices",id);
+  S.purchase_invoices=S.purchase_invoices.filter(x=>x.id!==id);
+  closeModal(true);toast(t("deleted"),"info");render("purchaseInv");
+}
+
+// ── QUOTATIONS ──
+function nextQuoteNo(){
+  const nums=S.quotations.map(q=>{const m=String(q.quote_no||"").match(/QT-(\d+)/);return m?parseInt(m[1]):0;});
+  return "QT-"+String(Math.max(0,...nums)+1).padStart(4,"0");
+}
+function rQuote(){
+  let qs=S.quotations;
+  const q=S.searchQ.toLowerCase();
+  if(q)qs=qs.filter(x=>(x.quote_no||"").toLowerCase().includes(q)||getCustName(x.customer_id).toLowerCase().includes(q));
+  qs=applyDateFilter(qs);
+  const total=qs.reduce((s,x)=>s+(x.grand_total||0),0);
+  const list=qs.map(x=>`
+    <div class="list-item" onclick="showQuoteDetail('${x.id}')">
+      <div class="list-icon" style="background:var(--blue-dim);color:var(--blue);">📝</div>
+      <div class="list-content"><div class="list-title">${x.quote_no||"—"}</div><div class="list-sub">${getCustName(x.customer_id)} · ${fmD(x.date)}</div></div>
+      <div class="list-right"><div class="list-amount">${fmA(x.grand_total||0,x.currency)}</div><div class="list-meta"><span class="badge ${x.status==="accepted"?"b-green":x.status==="rejected"?"b-red":"b-blue"}">${x.status||"open"}</span></div></div>
+    </div>`).join("")||`<div class="empty"><div class="empty-icon">📝</div><p>No quotations</p></div>`;
+  $("p-quotations").innerHTML=`
+    <div class="page-header"><div><div class="page-title">${t("quotations")}</div><div class="page-sub">${qs.length} · Total: ${fmA(total)}</div></div>
+      <button class="btn btn-primary btn-sm" onclick="showAddQuote()">+ ${t("add")}</button></div>
+    <div class="search-box"><span class="search-icon">🔍</span><input class="fc" placeholder="Search..." oninput="S.searchQ=this.value;rQuote()" value="${S.searchQ}"/></div>
+    ${dateFilterHTML("rQuote")}
+    <div class="card">${list}</div>`;
+}
+function showAddQuote(){
+  S.qItems=[];
+  const custOpts=S.customers.length?S.customers.map(c=>`<option value="${c.id}">${c.customer_code?`[${c.customer_code}] `:""}${c.name}</option>`).join(""):`<option value="">⚠️ No customers</option>`;
+  const qNo=nextQuoteNo();
+  modal("New Quotation",`
+    <div class="fgrid">
+      <div class="fg"><label class="fl">Quote #</label><input class="fc" id="qno" value="${qNo}"/></div>
+      <div class="fg"><label class="fl">Customer *</label><select class="fc" id="qcust">${custOpts}</select></div>
+      <div class="fg"><label class="fl">${t("date")}</label><input class="fc" type="date" id="qdate" value="${today()}"/></div>
+      <div class="fg"><label class="fl">Valid Until</label><input class="fc" type="date" id="qvalid"/></div>
+    </div>
+    <div style="font-size:11px;color:var(--text3);text-transform:uppercase;margin:14px 0 8px;">Items</div>
+    <div id="qitems"></div>
+    ${S.products.length===0?`<div class="alert alert-amber">⚠️ No products in inventory.</div>`:`<div class="search-box" style="margin-bottom:8px;"><span class="search-icon">🔍</span><input class="fc" id="qpSearch" placeholder="Search product..." oninput="searchQProd(this.value)"/></div>
+    <div id="qpResults" style="background:var(--glass);border-radius:8px;max-height:200px;overflow-y:auto;display:none;margin-bottom:10px;"></div>`}
+    <div class="fgrid" style="margin-top:14px;">
+      <div class="fg"><label class="fl">Tax (%)</label><input class="fc" type="number" id="qtax" value="0" min="0" max="100" step="0.01" oninput="calcQ()"/></div>
+      <div class="fg"><label class="fl">Discount (%)</label><input class="fc" type="number" id="qdisc" value="0" oninput="calcQ()"/></div>
+    </div>
+    <div class="fg"><label class="fl">Note</label><textarea class="fc" id="qnote" rows="2"></textarea></div>
+    <div style="background:var(--glass);padding:14px;border-radius:10px;margin-top:12px;">
+      <div style="display:flex;justify-content:space-between;color:var(--text3);"><span>Subtotal</span><span id="q-sub">0</span></div>
+      <div style="display:flex;justify-content:space-between;color:var(--text3);"><span>Tax</span><span id="q-tax">0</span></div>
+      <div style="display:flex;justify-content:space-between;color:var(--text3);"><span>Discount</span><span id="q-disc">0</span></div>
+      <div style="display:flex;justify-content:space-between;padding-top:10px;border-top:1px solid var(--border);font-weight:700;font-size:17px;"><span>Total</span><span id="q-grand" style="color:var(--accent);font-family:var(--mono);">0</span></div>
+    </div>`,
+    `<button class="btn btn-secondary" onclick="closeModal()">${t("cancel")}</button>
+     <button class="btn btn-primary" onclick="saveQuote()">Save</button>`,true);
+  rQItems();calcQ();
+}
+function searchQProd(q){
+  const res=$("qpResults");if(!res)return;
+  if(!q||q.length<1){res.style.display="none";return;}
+  const ql=q.toLowerCase();
+  const matches=S.products.filter(p=>p.name.toLowerCase().includes(ql)).slice(0,10);
+  if(matches.length===0){res.style.display="none";return;}
+  res.style.display="block";
+  res.innerHTML=matches.map(p=>`<div class="list-item" onclick="addQProd('${p.id}')" style="cursor:pointer;">
+    <div class="list-icon">📦</div><div class="list-content"><div class="list-title">${p.name}</div><div class="list-sub">${fmA(p.sell_price||0)}</div></div>
+  </div>`).join("");
+}
+function addQProd(pid){
+  const p=S.products.find(x=>x.id===pid);if(!p)return;
+  const ex=S.qItems.find(it=>it.product_id===pid);
+  if(ex){ex.qty++;ex.total=ex.qty*ex.unit_price;}
+  else S.qItems.push({product_id:pid,name:p.name,qty:1,unit_price:p.sell_price||0,total:p.sell_price||0});
+  if($("qpSearch"))$("qpSearch").value="";
+  if($("qpResults"))$("qpResults").style.display="none";
+  rQItems();calcQ();
+}
+function rmQItem(i){S.qItems.splice(i,1);rQItems();calcQ();}
+function rQItems(){
+  if(S.qItems.length===0){$("qitems").innerHTML=`<div style="text-align:center;padding:16px;color:var(--text3);font-size:12px;">Add products above</div>`;return;}
+  $("qitems").innerHTML=S.qItems.map((it,i)=>`
+    <div style="background:var(--glass);padding:10px;border-radius:8px;margin-bottom:8px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+        <div style="font-weight:600;font-size:13px;">${it.name||"—"}</div>
+        <button class="btn btn-icon btn-danger btn-sm" onclick="rmQItem(${i})">✕</button>
+      </div>
+      <div class="fgrid">
+        <div class="fg" style="margin:0;"><label class="fl">Qty</label><input class="fc" type="number" value="${it.qty}" min="1" oninput="S.qItems[${i}].qty=+this.value;calcQItem(${i})"/></div>
+        <div class="fg" style="margin:0;"><label class="fl">Price</label><input class="fc" type="number" value="${it.unit_price}" step="0.01" oninput="S.qItems[${i}].unit_price=+this.value;calcQItem(${i})"/></div>
+      </div>
+      <div style="text-align:right;margin-top:6px;color:var(--accent);font-family:var(--mono);font-weight:700;">= ${fmA(it.total)}</div>
+    </div>`).join("");
+}
+function calcQItem(i){S.qItems[i].total=S.qItems[i].qty*S.qItems[i].unit_price;calcQ();rQItems();}
+function calcQ(){
+  const sub=S.qItems.reduce((s,it)=>s+(it.total||0),0);
+  const tax=sub*(+$("qtax")?.value||0)/100;const disc=sub*(+$("qdisc")?.value||0)/100;
+  const grand=sub+tax-disc;
+  if($("q-sub"))$("q-sub").textContent=fmA(sub);
+  if($("q-tax"))$("q-tax").textContent=fmA(tax);
+  if($("q-disc"))$("q-disc").textContent=fmA(disc);
+  if($("q-grand"))$("q-grand").textContent=fmA(grand);
+}
+async function saveQuote(){
+  if(!lockSave())return;
+  try{
+    if(S.qItems.length===0){toast("Add items","err");return;}
+    const custId=$("qcust")?.value;
+    if(!custId){toast("Customer required","err");return;}
+    const sub=S.qItems.reduce((s,it)=>s+(it.total||0),0);
+    const taxP=+$("qtax")?.value||0,discP=+$("qdisc")?.value||0;
+    const tax=sub*taxP/100,disc=sub*discP/100,grand=sub+tax-disc;
+    const row={quote_no:$("qno")?.value,customer_id:custId,date:$("qdate")?.value||today(),valid_until:$("qvalid")?.value||null,currency:S.currency,tax_pct:taxP,disc_pct:discP,subtotal:sub,tax_amount:tax,disc_amount:disc,grand_total:grand,status:"open",note:$("qnote")?.value||"",items:S.qItems};
+    const d=await ins("quotations",row);if(!d)return;
+    S.quotations.unshift(d);
+    closeModal(true);toast("Quotation saved","ok");render("quotations");
+  }finally{unlockSave();}
+}
+function showQuoteDetail(id){
+  const q=S.quotations.find(x=>x.id===id);if(!q)return;
+  const cust=getCust(q.customer_id);
+  const itemRows=(q.items||[]).map(it=>`<tr><td style="padding:6px;">${it.name}</td><td style="padding:6px;text-align:center;">${it.qty}</td><td style="padding:6px;text-align:right;">${fmA(it.unit_price)}</td><td style="padding:6px;text-align:right;font-weight:700;">${fmA(it.total)}</td></tr>`).join("");
+  modal(q.quote_no,`
+    <div style="background:var(--glass);padding:12px;border-radius:10px;margin-bottom:12px;">
+      <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:6px;"><span style="color:var(--text3);">Customer:</span><span>${cust?.name||"—"}</span></div>
+      <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:6px;"><span style="color:var(--text3);">Date:</span><span>${fmD(q.date)}</span></div>
+      ${q.valid_until?`<div style="display:flex;justify-content:space-between;font-size:12px;"><span style="color:var(--text3);">Valid until:</span><span>${fmD(q.valid_until)}</span></div>`:""}
+    </div>
+    <table style="width:100%;font-size:12px;background:var(--glass);border-radius:8px;overflow:hidden;">
+      <thead><tr style="background:rgba(255,255,255,.05);"><th style="padding:6px;text-align:left;">Item</th><th style="padding:6px;">Qty</th><th style="padding:6px;text-align:right;">Price</th><th style="padding:6px;text-align:right;">Total</th></tr></thead>
+      <tbody>${itemRows}</tbody>
+    </table>
+    <div style="background:var(--glass);padding:12px;border-radius:8px;margin-top:12px;">
+      <div style="display:flex;justify-content:space-between;color:var(--text3);font-size:12px;"><span>Subtotal</span><span>${fmA(q.subtotal)}</span></div>
+      ${q.tax_amount?`<div style="display:flex;justify-content:space-between;color:var(--text3);font-size:12px;"><span>Tax</span><span>${fmA(q.tax_amount)}</span></div>`:""}
+      ${q.disc_amount?`<div style="display:flex;justify-content:space-between;color:var(--text3);font-size:12px;"><span>Discount</span><span>${fmA(q.disc_amount)}</span></div>`:""}
+      <div style="display:flex;justify-content:space-between;padding-top:8px;border-top:1px solid var(--border);font-weight:700;color:var(--accent);"><span>Total</span><span style="font-family:var(--mono);">${fmA(q.grand_total)}</span></div>
+    </div>
+    ${q.note?`<div style="margin-top:12px;padding:10px;background:var(--glass);border-radius:8px;font-size:12px;color:var(--text2);">${q.note}</div>`:""}`,
+    `<button class="btn btn-success btn-sm" onclick="convertQuoteToInv('${id}')">→ Convert to Invoice</button>
+     <button class="btn btn-danger btn-sm" onclick="delQuote('${id}')">${t("delete")}</button>
+     <button class="btn btn-secondary" onclick="closeModal(true)">${t("close")}</button>`,true);
+}
+async function convertQuoteToInv(id){
+  const q=S.quotations.find(x=>x.id===id);if(!q)return;
+  if(!confirm("Convert this quotation to an invoice?"))return;
+  S.invItems=q.items||[];
+  await upd("quotations",id,{status:"accepted"});
+  q.status="accepted";
+  closeModal(true);
+  // Open invoice with quote data pre-filled
+  showAddInv();
+  setTimeout(()=>{
+    if($("invcust"))$("invcust").value=q.customer_id;
+    if($("invtax"))$("invtax").value=q.tax_pct;
+    if($("invdisc"))$("invdisc").value=q.disc_pct;
+    calcInv();rII();
+  },200);
+}
+async function delQuote(id){
+  if(!confirm(t("confirmDel")))return;
+  await del("quotations",id);
+  S.quotations=S.quotations.filter(x=>x.id!==id);
+  closeModal(true);toast(t("deleted"),"info");render("quotations");
+}
+
+// ── RECURRING EXPENSES ──
+function rRecurring(){
+  const list=S.recurring_expenses.map(r=>`
+    <div class="list-item" onclick="showAddRecurring('${r.id}')">
+      <div class="list-icon" style="background:${r.active?"var(--accent-dim)":"var(--bg3)"};color:${r.active?"var(--accent)":"var(--text3)"};">🔁</div>
+      <div class="list-content"><div class="list-title">${r.name}</div><div class="list-sub">Day ${r.day_of_month} · ${r.category||"—"} · ${r.active?"Active":"Paused"}</div></div>
+      <div class="list-right"><div class="list-amount" style="color:var(--red);">−${fmA(r.amount,r.currency)}</div></div>
+    </div>`).join("")||`<div class="empty"><div class="empty-icon">🔁</div><p>No recurring expenses</p></div>`;
+  const monthly=S.recurring_expenses.filter(r=>r.active).reduce((s,r)=>s+r.amount,0);
+  $("p-recurring").innerHTML=`
+    <div class="page-header"><div><div class="page-title">${t("recurring")}</div><div class="page-sub">Monthly total: ${fmA(monthly)}</div></div>
+      <button class="btn btn-primary btn-sm" onclick="showAddRecurring()">+ ${t("add")}</button></div>
+    <div class="card" style="background:var(--accent-dim);padding:12px;font-size:12px;color:var(--text2);margin-bottom:12px;">
+      💡 These run automatically on their day each month. Tap "Run Now" to add this month's entries.
+      <button class="btn btn-primary btn-xs" onclick="runRecurringNow()" style="margin-top:8px;">▶ Run This Month</button>
+    </div>
+    <div class="card">${list}</div>`;
+}
+function showAddRecurring(eid){
+  const r=eid?S.recurring_expenses.find(x=>x.id===eid):null;
+  const accOpts=S.accounts.map(a=>`<option value="${a.id}" ${r?.account_id===a.id?"selected":""}>${AICONS[a.type]} ${a.name}</option>`).join("");
+  const catOpts=TCATS.map(c=>`<option value="${c}" ${r?.category===c?"selected":""}>${c}</option>`).join("");
+  modal(eid?"Edit Recurring":"New Recurring Expense",`
+    <div class="fgrid">
+      <div class="fg"><label class="fl">Name *</label><input class="fc" id="rcn" value="${r?.name||""}" placeholder="e.g. Rent, Salary"/></div>
+      <div class="fg"><label class="fl">Amount *</label><input class="fc" type="number" id="rca" value="${r?.amount||""}" step="0.01"/></div>
+      <div class="fg"><label class="fl">Category</label><select class="fc" id="rcc">${catOpts}</select></div>
+      <div class="fg"><label class="fl">Account</label><select class="fc" id="rcacc">${accOpts}</select></div>
+      <div class="fg"><label class="fl">Day of Month (1-28)</label><input class="fc" type="number" id="rcd" min="1" max="28" value="${r?.day_of_month||1}"/></div>
+      <div class="fg"><label class="fl">Active</label><select class="fc" id="rcact"><option value="true" ${r?.active!==false?"selected":""}>Yes</option><option value="false" ${r?.active===false?"selected":""}>No (paused)</option></select></div>
+    </div>`,
+    `${eid?`<button class="btn btn-danger btn-sm" onclick="delRecurring('${eid}')">✕</button>`:""}
+     <button class="btn btn-secondary" onclick="closeModal()">${t("cancel")}</button>
+     <button class="btn btn-primary" onclick="saveRecurring('${eid||""}')">${t("save")}</button>`);
+}
+async function saveRecurring(eid){
+  const name=$("rcn")?.value?.trim();if(!name){toast("Name?","err");return;}
+  const amt=+$("rca")?.value;if(!amt||amt<=0){toast("Amount?","err");return;}
+  const row={name,amount:amt,currency:S.currency,category:$("rcc")?.value||"other",account_id:$("rcacc")?.value||null,day_of_month:+$("rcd")?.value||1,active:$("rcact")?.value==="true"};
+  if(eid){await upd("recurring_expenses",eid,row);const i=S.recurring_expenses.findIndex(x=>x.id===eid);if(i>=0)S.recurring_expenses[i]={...S.recurring_expenses[i],...row};}
+  else{const d=await ins("recurring_expenses",row);if(!d)return;S.recurring_expenses.unshift(d);}
+  closeModal(true);toast(t("saved"),"ok");render("recurring");
+}
+async function delRecurring(id){
+  if(!confirm(t("confirmDel")))return;
+  await del("recurring_expenses",id);
+  S.recurring_expenses=S.recurring_expenses.filter(x=>x.id!==id);
+  closeModal(true);toast(t("deleted"),"info");render("recurring");
+}
+async function runRecurringNow(){
+  const tod=today();
+  const monthStart=tod.substring(0,7)+"-01";
+  const active=S.recurring_expenses.filter(r=>r.active);
+  if(active.length===0){toast("No active expenses","info");return;}
+  if(!confirm(`Add ${active.length} recurring expense(s) for this month?`))return;
+  let added=0;
+  for(const r of active){
+    // Check if already run this month
+    if(r.last_run&&r.last_run>=monthStart)continue;
+    const day=String(r.day_of_month).padStart(2,"0");
+    const txDate=tod.substring(0,7)+"-"+day;
+    const txd=txDate>tod?tod:txDate;
+    const tx=await ins("transactions",{type:"expense",amount:r.amount,currency:r.currency,account_id:r.account_id,category:r.category,note:`[Recurring] ${r.name}`,date:txd});
+    if(tx){
+      S.transactions.unshift(tx);
+      if(r.account_id){const acc=getAcc(r.account_id);if(acc){acc.balance=(acc.balance||0)-r.amount;await upd("accounts",r.account_id,{balance:acc.balance});}}
+      await upd("recurring_expenses",r.id,{last_run:tod});
+      r.last_run=tod;
+      added++;
+    }
+  }
+  toast(`Added ${added} expense(s)`,"ok");render(S.page);
+}
+
 function showList(type,from,to){
   let items=[],title="",totalLabel="";
   if(type==="sales"){items=S.invoices;title=t("listSalesInv");totalLabel="Total Sales";}
@@ -2240,13 +2827,17 @@ function rSet(){
       </div>
       <div class="fg"><label class="fl">Low Balance Threshold</label><input class="fc" type="number" id="lbt" value="${S.lowBalanceThreshold}" onchange="S.lowBalanceThreshold=+this.value;localStorage.setItem('lowBalThr',this.value);toast('Updated','ok');"/></div>
     </div></div>
-    <div class="card"><div class="card-head"><span class="card-title">${t("profile")}</span></div><div class="card-body">
+    <div class="card"><div class="card-head"><span class="card-title">${t("profile")} / Company</span></div><div class="card-body">
       <div class="fgrid">
         <div class="fg"><label class="fl">${t("companyName")}</label><input class="fc" id="pf-name" value="${S.profile.name||""}"/></div>
         <div class="fg"><label class="fl">${t("phone")}</label><input class="fc" id="pf-phone" value="${S.profile.phone||""}"/></div>
         <div class="fg"><label class="fl">Email</label><input class="fc" id="pf-email" value="${S.profile.email||""}"/></div>
+        <div class="fg"><label class="fl">Company TRN</label><input class="fc" id="pf-trn" value="${localStorage.getItem("companyTRN")||""}" placeholder="100xxxxxxxxxxx3"/></div>
         <div class="fg"><label class="fl">${t("address")}</label><input class="fc" id="pf-addr" value="${S.profile.address||""}"/></div>
+        <div class="fg"><label class="fl">Default Tax % (for new invoices)</label><input class="fc" type="number" id="pf-tax" value="${localStorage.getItem("defaultTax")||0}" step="0.01"/></div>
       </div>
+      <div class="fg"><label class="fl">Company Logo URL (optional)</label><input class="fc" id="pf-logo" value="${localStorage.getItem("companyLogo")||""}" placeholder="https://...png"/></div>
+      ${localStorage.getItem("companyLogo")?`<div style="margin-bottom:10px;"><img src="${localStorage.getItem("companyLogo")}" style="max-height:60px;border-radius:6px;"/></div>`:""}
       <button class="btn btn-primary btn-sm" onclick="saveProfile()">${t("save")}</button>
     </div></div>
     <div class="card"><div class="card-head"><span class="card-title">${t("ai")}</span></div><div class="card-body">
@@ -2271,7 +2862,14 @@ function rSet(){
       ${localStorage.getItem("lockedUntil")?`<button class="btn btn-amber btn-sm" onclick="unlockPeriod()">🔓 Unlock (${localStorage.getItem("lockedUntil")})</button>`:`<button class="btn btn-secondary btn-sm" onclick="lockPeriod()">🔒 Lock Period</button>`}
     </div></div>`;
 }
-function saveProfile(){S.profile={name:$("pf-name")?.value||"",phone:$("pf-phone")?.value||"",email:$("pf-email")?.value||"",address:$("pf-addr")?.value||""};localStorage.setItem("profile",JSON.stringify(S.profile));toast(t("saved"),"ok");}
+function saveProfile(){
+  S.profile={name:$("pf-name")?.value||"",phone:$("pf-phone")?.value||"",email:$("pf-email")?.value||"",address:$("pf-addr")?.value||""};
+  localStorage.setItem("profile",JSON.stringify(S.profile));
+  localStorage.setItem("companyTRN",$("pf-trn")?.value||"");
+  localStorage.setItem("companyLogo",$("pf-logo")?.value||"");
+  localStorage.setItem("defaultTax",$("pf-tax")?.value||"0");
+  toast(t("saved"),"ok");render("settings");
+}
 function saveAIKey(){S.aiKey=$("aik")?.value||"";localStorage.setItem("aiKey",S.aiKey);toast("Saved","ok");}
 function setLang(l){S.lang=l;localStorage.setItem("lang",l);applyLang();buildShell();render(S.page);}
 
@@ -2322,6 +2920,8 @@ const PAGES=[
   {id:"cashier",icon:"💰",label:"cashier",mob:true},
   {id:"pos",icon:"🛒",label:"pos",mob:true},
   {id:"invoices",icon:"🧾",label:"invoices",mob:true},
+  {id:"purchaseInv",icon:"🛒",label:"purchaseInv",mob:false},
+  {id:"quotations",icon:"📝",label:"quotations",mob:false},
   {id:"vouchers",icon:"📋",label:"vouchers",mob:false},
   {id:"chequesIn",icon:"📥",label:"chequesIn",mob:false},
   {id:"chequesOut",icon:"📤",label:"chequesOut",mob:false},
@@ -2331,6 +2931,7 @@ const PAGES=[
   {id:"customers",icon:"👥",label:"customers",mob:false},
   {id:"suppliers",icon:"🏭",label:"suppliers",mob:false},
   {id:"debtorsCreditors",icon:"💼",label:"debtorsCreditors",mob:false},
+  {id:"recurring",icon:"🔁",label:"recurring",mob:false},
   {id:"reports",icon:"📊",label:"reports",mob:false},
   {id:"budgets",icon:"💵",label:"budgets",mob:false},
   {id:"goals",icon:"🎯",label:"goals",mob:false},
