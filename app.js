@@ -145,6 +145,46 @@ function unlockSave(){
   document.querySelectorAll('.mfoot .btn-primary, .card-head .btn-primary').forEach(b=>{b.disabled=false;b.style.opacity="";});
 }
 
+// Audit log: record significant actions silently
+async function logAction(action,entityType,entityId,details){
+  try{
+    await sb.from("audit_log").insert({user_id:S.user.id,action,entity_type:entityType,entity_id:String(entityId||""),details:details||""});
+  }catch(e){/* silent fail */}
+}
+
+// Period locking: prevent editing old data
+function isLocked(date){
+  const lockEnd=localStorage.getItem("lockedUntil");
+  if(!lockEnd)return false;
+  return date<=lockEnd;
+}
+function lockPeriod(){
+  const date=prompt("Lock all data up to (YYYY-MM-DD):",today());
+  if(!date||!/^\d{4}-\d{2}-\d{2}$/.test(date)){toast("Invalid date format","err");return;}
+  if(!confirm(`Lock all transactions up to ${date}?\n\nYou won't be able to edit or delete anything from that date or earlier.`))return;
+  localStorage.setItem("lockedUntil",date);
+  toast(`Locked until ${date}`,"ok");
+  render(S.page);
+}
+function unlockPeriod(){
+  if(!confirm("Unlock all periods? You'll be able to edit old data again."))return;
+  localStorage.removeItem("lockedUntil");
+  toast("All periods unlocked","ok");
+  render(S.page);
+}
+
+// View audit log
+async function showAuditLog(){
+  const {data,error}=await sb.from("audit_log").select("*").eq("user_id",S.user.id).order("created_at",{ascending:false}).limit(100);
+  if(error){toast("Could not load log","err");return;}
+  const rows=(data||[]).map(l=>{
+    const dt=new Date(l.created_at);
+    return `<div class="list-item"><div class="list-icon">📋</div><div class="list-content"><div class="list-title">${l.action} ${l.entity_type||""}</div><div class="list-sub">${dt.toLocaleString()} · ${l.details||""}</div></div></div>`;
+  }).join("")||`<div class="empty"><p>No activity yet</p></div>`;
+  modal("📋 Activity Log (Last 100)",`<div class="card">${rows}</div>`,
+    `<button class="btn btn-secondary" onclick="closeModal(true)">${t("close")}</button>`,true);
+}
+
 // Date filter UI and logic
 function dateFilterRange(){
   const tod=today();
@@ -635,7 +675,7 @@ function showVoucher(type,editId){
   modal(title,`
     <div class="fgrid">
       <div class="fg"><label class="fl">${t("voucherNo")}</label><input class="fc" id="vno" value="${vNo}"/></div>
-      <div class="fg"><label class="fl">${t("date")}</label><input class="fc" type="date" id="vdate" value="${v?.date||today()}"/></div>
+      <div class="fg"><label class="fl">${t("date")}</label><input class="fc" type="date" id="vdate" value="${v?.date||today()}" max="${today()}"/></div>
       <div class="fg"><label class="fl">${partyLabel}</label><input class="fc" id="vparty" value="${v?.party||""}" placeholder="Name / Company"/></div>
       <div class="fg"><label class="fl">${t("amount")}</label><input class="fc" type="number" id="vamt" value="${v?.amount||""}" step="0.01" placeholder="0.00"/></div>
       <div class="fg"><label class="fl">${t("currency")}</label><select class="fc" id="vcur">${curOpts}</select></div>
@@ -646,8 +686,10 @@ function showVoucher(type,editId){
         <option value="cheque" ${v?.payment_mode==="cheque"?"selected":""}>${t("cheque")}</option>
       </select></div>
       <div class="fg"><label class="fl">${t("account")}</label><select class="fc" id="vacc">${accOpts}</select></div>
-      <div class="fg"><label class="fl">${t("note")}</label><input class="fc" id="vnote" value="${v?.note||""}"/></div>
-    </div>`,
+      <div class="fg"><label class="fl">Reference #</label><input class="fc" id="vref" value="${v?.reference_no||""}" placeholder="Cheque/Bank ref"/></div>
+    </div>
+    <div class="fg"><label class="fl">${t("note")} (printed)</label><input class="fc" id="vnote" value="${v?.note||""}"/></div>
+    <div class="fg"><label class="fl">Internal Note (private)</label><textarea class="fc" id="vintnote" rows="2" placeholder="Only you see this">${v?.internal_note||""}</textarea></div>`,
     `${editId?`<button class="btn btn-danger btn-sm" onclick="delVoucher('${editId}')">✕</button>`:""}
      <button class="btn btn-secondary" onclick="closeModal()">${t("cancel")}</button>
      <button class="btn btn-primary" onclick="saveVoucher('${type}','${editId||""}')">${t("save")}</button>`);
@@ -655,6 +697,19 @@ function showVoucher(type,editId){
 
 async function saveVoucher(type,eid){
   const amt=parseFloat($("vamt")?.value);if(!amt||amt<=0){toast("Amount required","err");return;}
+  const vDate=$("vdate")?.value||today();
+  // Validation: date cannot be in future
+  if(vDate>today()){toast("Date cannot be in the future","err");return;}
+  // Validation: confirm if amount > 5000
+  if(amt>5000&&!eid){
+    if(!confirm(`Large amount: ${fmA(amt)}\n\nAre you sure?`))return;
+  }
+  // Validation: check duplicate voucher number
+  const vNo=$("vno")?.value||"";
+  if(vNo&&!eid){
+    const dup=S.vouchers.find(v=>v.voucher_no===vNo);
+    if(dup){toast(`Voucher #${vNo} already exists!`,"err");return;}
+  }
   let accountId=$("vacc")?.value||null;
   // Auto-create default cash account if user has none
   if(!accountId&&S.accounts.length===0){
@@ -663,7 +718,7 @@ async function saveVoucher(type,eid){
   }
   // Account is now required
   if(!accountId){toast("Please select an account","err");return;}
-  const row={voucher_no:$("vno")?.value||"",type,date:$("vdate")?.value||today(),party:$("vparty")?.value||"",amount:amt,currency:$("vcur")?.value||"AED",payment_mode:$("vpm")?.value||"cash",account_id:accountId,note:$("vnote")?.value||""};
+  const row={voucher_no:vNo,type,date:vDate,party:$("vparty")?.value||"",amount:amt,currency:$("vcur")?.value||"AED",payment_mode:$("vpm")?.value||"cash",account_id:accountId,note:$("vnote")?.value||"",reference_no:$("vref")?.value||"",internal_note:$("vintnote")?.value||""};
   if(eid){
     await upd("vouchers",eid,row);
     const i=S.vouchers.findIndex(x=>x.id===eid);if(i>=0)S.vouchers[i]={...S.vouchers[i],...row};
@@ -689,12 +744,14 @@ async function saveVoucher(type,eid){
     }
     const tx=await ins("transactions",{type:type==="receipt"?"income":"expense",amount:amt,currency:row.currency,account_id:accountId,category:type==="receipt"?"sales":"other",note:`${row.voucher_no} - ${row.party}`,date:row.date});
     if(tx)S.transactions.unshift(tx);
+    logAction("create","voucher",d.id,`${vNo} ${fmA(amt)}`);
   }
   closeModal(true);toast(t("saved"),"ok");render(S.page);
 }
 
 async function delVoucher(id){
   const v=S.vouchers.find(x=>x.id===id);if(!v)return;
+  if(isLocked(v.date)){toast("Cannot delete: period is locked","err");return;}
   if(!confirm(`Delete ${v.voucher_no}? This will also remove the related transaction and reverse the balance.`))return;
   // Reverse account balance
   if(v.account_id){
@@ -720,7 +777,7 @@ function rVouchers(){
   if(S.pillFilter==="receipt")vs=vs.filter(v=>v.type==="receipt");
   if(S.pillFilter==="payment")vs=vs.filter(v=>v.type==="payment");
   const q=S.searchQ.toLowerCase();
-  if(q)vs=vs.filter(v=>(v.party||"").toLowerCase().includes(q)||(v.voucher_no||"").toLowerCase().includes(q));
+  if(q)vs=vs.filter(v=>(v.party||"").toLowerCase().includes(q)||(v.voucher_no||"").toLowerCase().includes(q)||(v.note||"").toLowerCase().includes(q)||String(v.amount||"").includes(q));
   vs=applyDateFilter(vs);
   
   const list=vs.map(v=>`
@@ -1127,6 +1184,10 @@ async function saveTx(){
     const cur=$("txcur")?.value||"AED";
     const date=$("txdate")?.value||today();
     const note=$("txnote")?.value||"";
+    // Validation: future date
+    if(date>today()){toast("Date cannot be in the future","err");return;}
+    // Validation: large amount
+    if(amt>5000){if(!confirm(`Large amount: ${fmA(amt,cur)}\n\nAre you sure?`))return;}
     
     if(type==="transfer"){
       const fromId=$("txacc")?.value;
@@ -1156,6 +1217,7 @@ async function saveTx(){
 }
 async function delTx(id){
   const tx=S.transactions.find(x=>x.id===id);if(!tx)return;
+  if(isLocked(tx.date)){toast("Cannot delete: period is locked","err");return;}
   // Check if linked to voucher/invoice via note
   const note=tx.note||"";
   let linkedV=null,linkedI=null;
@@ -1200,6 +1262,8 @@ function rInv(){
   let invs=S.invoices;
   if(S.pillFilter==="paid")invs=invs.filter(i=>i.status==="paid");
   if(S.pillFilter==="submitted")invs=invs.filter(i=>i.status==="submitted");
+  const q=S.searchQ.toLowerCase();
+  if(q)invs=invs.filter(inv=>(inv.invoice_no||"").toLowerCase().includes(q)||getCustName(inv.customer_id).toLowerCase().includes(q)||String(inv.grand_total||"").includes(q));
   invs=applyDateFilter(invs);
   const totSales=invs.reduce((s,i)=>s+(i.grand_total||0),0);
   const list=invs.map(inv=>{
@@ -1213,6 +1277,7 @@ function rInv(){
   $("p-invoices").innerHTML=`
     <div class="page-header"><div><div class="page-title">${t("invoices")}</div><div class="page-sub">${invs.length} · Total: ${fmA(totSales)} · Outstanding: ${fmA(outstandingTotal())}</div></div>
       <button class="btn btn-primary btn-sm" onclick="showAddInv()">+ ${t("add")}</button></div>
+    <div class="search-box"><span class="search-icon">🔍</span><input class="fc" placeholder="Search by invoice #, customer, amount..." oninput="S.searchQ=this.value;rInv()" value="${S.searchQ}"/></div>
     <div class="pills">
       <button class="pill ${S.pillFilter==="all"?"on":""}" onclick="S.pillFilter='all';rInv()">All</button>
       <button class="pill ${S.pillFilter==="paid"?"on":""}" onclick="S.pillFilter='paid';rInv()">${t("paid")}</button>
@@ -1234,8 +1299,9 @@ function showAddInv(){
       <div class="fg"><label class="fl">${t("customer")} *</label><select class="fc" id="invcust">${custOpts}</select>
         <div style="font-size:10px;color:var(--text3);margin-top:4px;">No customer? <span style="color:var(--accent);cursor:pointer;text-decoration:underline;" onclick="useGeneralCust()">Use General Customer</span></div>
       </div>
-      <div class="fg"><label class="fl">${t("date")}</label><input class="fc" type="date" id="invdate" value="${today()}"/></div>
+      <div class="fg"><label class="fl">${t("date")}</label><input class="fc" type="date" id="invdate" value="${today()}" max="${today()}"/></div>
       <div class="fg"><label class="fl">${t("dueDate")}</label><input class="fc" type="date" id="invdue"/></div>
+      <div class="fg"><label class="fl">Reference #</label><input class="fc" id="invref" placeholder="PO/Order ref"/></div>
     </div>
     <div style="font-size:11px;color:var(--text3);text-transform:uppercase;margin:14px 0 8px;">${t("items")} (from Inventory)</div>
     <div id="iitems"></div>
@@ -1247,6 +1313,7 @@ function showAddInv(){
       <div class="fg"><label class="fl">${t("paymentMode")}</label><select class="fc" id="invpm"><option value="cash">${t("cash")}</option><option value="card">${t("card")}</option><option value="credit">${t("credit")}</option></select></div>
       <div class="fg"><label class="fl">${t("account")}</label><select class="fc" id="invacc">${accOpts}</select></div>
     </div>
+    <div class="fg" style="margin-top:14px;"><label class="fl">Internal Note (private)</label><textarea class="fc" id="invintnote" rows="2" placeholder="Only you see this"></textarea></div>
     <div style="background:var(--glass);padding:14px;border-radius:10px;margin-top:12px;">
       <div style="display:flex;justify-content:space-between;margin-bottom:5px;color:var(--text3);"><span>${t("subtotal")}</span><span id="i-sub">0</span></div>
       <div style="display:flex;justify-content:space-between;margin-bottom:5px;color:var(--text3);"><span>${t("tax")}</span><span id="i-tax">0</span></div>
@@ -1323,6 +1390,15 @@ async function saveInv(status){
   if(!lockSave())return;
   try{
     if(S.invItems.length===0){toast("Add at least one item","err");return;}
+    const invDate=$("invdate")?.value||today();
+    // Validation: future date
+    if(invDate>today()){toast("Date cannot be in the future","err");return;}
+    // Validation: duplicate invoice number
+    const invNo=$("invno")?.value;
+    if(invNo){
+      const dup=S.invoices.find(i=>i.invoice_no===invNo);
+      if(dup){toast(`Invoice #${invNo} already exists!`,"err");return;}
+    }
     let custId=$("invcust")?.value;
     // If no customer selected/exists, auto-create General Customer
     if(!custId){
@@ -1333,8 +1409,23 @@ async function saveInv(status){
     const sub=S.invItems.reduce((s,it)=>s+(it.total||0),0);
     const taxP=+$("invtax")?.value||0,discP=+$("invdisc")?.value||0;
     const tax=sub*taxP/100,disc=sub*discP/100,grand=sub+tax-disc;
+    // Validation: large amount
+    if(grand>5000&&status==="submitted"){
+      if(!confirm(`Large invoice: ${fmA(grand)}\n\nAre you sure?`))return;
+    }
+    // Validation: credit limit
+    if(status==="submitted"&&custId){
+      const cust=getCust(custId);
+      if(cust&&(cust.credit_limit_amount||0)>0){
+        const currentDebt=calcCustomerBalance(custId);
+        const newDebt=currentDebt+grand;
+        if(newDebt>cust.credit_limit_amount){
+          if(!confirm(`⚠️ Credit Limit Warning!\n\n${cust.name}\nCurrent debt: ${fmA(currentDebt)}\nThis invoice: ${fmA(grand)}\nNew total: ${fmA(newDebt)}\nLimit: ${fmA(cust.credit_limit_amount)}\n\nProceed anyway?`))return;
+        }
+      }
+    }
     const pm=$("invpm")?.value||"cash";
-    const row={invoice_no:$("invno")?.value,date:$("invdate")?.value||today(),due_date:$("invdue")?.value||null,customer_id:custId,currency:S.currency,payment_method:pm,tax_pct:taxP,disc_pct:discP,subtotal:sub,tax_amount:tax,disc_amount:disc,grand_total:grand,note:"",account_id:$("invacc")?.value||null,status,items:S.invItems};
+    const row={invoice_no:invNo,date:invDate,due_date:$("invdue")?.value||null,customer_id:custId,currency:S.currency,payment_method:pm,tax_pct:taxP,disc_pct:discP,subtotal:sub,tax_amount:tax,disc_amount:disc,grand_total:grand,note:"",account_id:$("invacc")?.value||null,status,items:S.invItems,reference_no:$("invref")?.value||"",internal_note:$("invintnote")?.value||""};
     const d=await ins("invoices",row);if(!d)return;
     S.invoices.unshift(d);
     // Decrement stock for products
@@ -1477,6 +1568,7 @@ function showAddCustomer(eid){
       <div class="fg"><label class="fl">Customer Code</label><input class="fc" id="cc" value="${code}" readonly style="background:var(--bg3);"/></div>
       <div class="fg"><label class="fl">${t("name")} *</label><input class="fc" id="cn" value="${c?.name||""}"/></div>
       <div class="fg"><label class="fl">TRN Number</label><input class="fc" id="ctrn" value="${c?.trn_number||""}" placeholder="Tax Registration No."/></div>
+      <div class="fg"><label class="fl">Credit Limit</label><input class="fc" type="number" id="cclim" value="${c?.credit_limit_amount||0}" placeholder="0 = no limit"/></div>
       <div class="fg"><label class="fl">Email</label><input class="fc" id="ce" value="${c?.email||""}"/></div>
       <div class="fg"><label class="fl">${t("phone")}</label><input class="fc" id="cph" value="${c?.phone||""}"/></div>
     </div>
@@ -1485,7 +1577,7 @@ function showAddCustomer(eid){
 }
 async function saveCust(eid){
   const name=$("cn")?.value?.trim();if(!name){toast("Name required","err");return;}
-  const row={name,customer_code:$("cc")?.value||nextCustomerCode(),trn_number:$("ctrn")?.value||"",email:$("ce")?.value||"",phone:$("cph")?.value||"",address:$("cadr")?.value||""};
+  const row={name,customer_code:$("cc")?.value||nextCustomerCode(),trn_number:$("ctrn")?.value||"",credit_limit_amount:+$("cclim")?.value||0,email:$("ce")?.value||"",phone:$("cph")?.value||"",address:$("cadr")?.value||""};
   if(eid){await upd("customers",eid,row);const i=S.customers.findIndex(x=>x.id===eid);if(i>=0)S.customers[i]={...S.customers[i],...row};}
   else{const d=await ins("customers",row);if(!d)return;S.customers.push(d);}
   closeModal(true);toast(t("saved"),"ok");render("customers");
@@ -1764,6 +1856,11 @@ function rRep(){
     <div class="card"><div class="card-head"><span class="card-title">Reports</span></div>
       <button class="list-item" onclick="showDayBook()" style="width:100%;border:none;background:none;text-align:left;color:inherit;font-family:inherit;cursor:pointer;"><div class="list-icon">📅</div><div class="list-content"><div class="list-title">Day Book</div><div class="list-sub">Today's complete activity</div></div><div class="list-right">→</div></button>
       <button class="list-item" onclick="showCustStatement()" style="width:100%;border:none;background:none;text-align:left;color:inherit;font-family:inherit;cursor:pointer;"><div class="list-icon">📒</div><div class="list-content"><div class="list-title">Customer Statement</div><div class="list-sub">Balance per customer</div></div><div class="list-right">→</div></button>
+      <button class="list-item" onclick="showAgingReport()" style="width:100%;border:none;background:none;text-align:left;color:inherit;font-family:inherit;cursor:pointer;"><div class="list-icon">⏰</div><div class="list-content"><div class="list-title">Aging Report</div><div class="list-sub">Overdue debts by age</div></div><div class="list-right">→</div></button>
+      <button class="list-item" onclick="showTrialBalance()" style="width:100%;border:none;background:none;text-align:left;color:inherit;font-family:inherit;cursor:pointer;"><div class="list-icon">⚖️</div><div class="list-content"><div class="list-title">Trial Balance</div><div class="list-sub">All accounts with balances</div></div><div class="list-right">→</div></button>
+      <button class="list-item" onclick="showProfitLoss()" style="width:100%;border:none;background:none;text-align:left;color:inherit;font-family:inherit;cursor:pointer;"><div class="list-icon">📈</div><div class="list-content"><div class="list-title">Profit & Loss</div><div class="list-sub">Income vs Expenses</div></div><div class="list-right">→</div></button>
+      <button class="list-item" onclick="showTopProducts()" style="width:100%;border:none;background:none;text-align:left;color:inherit;font-family:inherit;cursor:pointer;"><div class="list-icon">🏆</div><div class="list-content"><div class="list-title">Top Products</div><div class="list-sub">Best sellers</div></div><div class="list-right">→</div></button>
+      <button class="list-item" onclick="showTopCustomers()" style="width:100%;border:none;background:none;text-align:left;color:inherit;font-family:inherit;cursor:pointer;"><div class="list-icon">⭐</div><div class="list-content"><div class="list-title">Top Customers</div><div class="list-sub">Top buyers</div></div><div class="list-right">→</div></button>
     </div>
     <div class="card"><div class="card-head"><span class="card-title">Lists</span></div>
       <button class="list-item" onclick="showList('sales')" style="width:100%;border:none;background:none;text-align:left;color:inherit;font-family:inherit;cursor:pointer;"><div class="list-icon">🧾</div><div class="list-content"><div class="list-title">${t("listSalesInv")}</div><div class="list-sub">${S.invoices.length} invoices · ${fmA(totSales)}</div></div><div class="list-right">→</div></button>
@@ -1833,6 +1930,140 @@ function renderCustStatement(){
       </div>
     </div>
     <div class="card">${rows}</div>`;
+}
+
+// ── AGING REPORT ──
+function showAgingReport(){
+  const now=new Date();now.setHours(0,0,0,0);
+  // Buckets: current (0-30), 31-60, 61-90, 90+
+  const buckets={current:[],b31:[],b61:[],b90:[]};
+  S.invoices.filter(i=>i.status==="submitted").forEach(inv=>{
+    if(!inv.due_date)return;
+    const due=new Date(inv.due_date);
+    const daysOverdue=Math.floor((now-due)/(1000*60*60*24));
+    const item={inv,daysOverdue,customer:getCustName(inv.customer_id)};
+    if(daysOverdue<=0)return; // Not overdue
+    if(daysOverdue<=30)buckets.current.push(item);
+    else if(daysOverdue<=60)buckets.b31.push(item);
+    else if(daysOverdue<=90)buckets.b61.push(item);
+    else buckets.b90.push(item);
+  });
+  const renderBucket=(items,title,color)=>{
+    if(items.length===0)return "";
+    const total=items.reduce((s,it)=>s+(it.inv.grand_total||0),0);
+    return `<div class="card">
+      <div class="card-head"><span class="card-title" style="color:${color};">${title} · ${items.length} invoices · ${fmA(total)}</span></div>
+      ${items.map(it=>`<div class="list-item"><div class="list-icon">🧾</div><div class="list-content"><div class="list-title">${it.inv.invoice_no}</div><div class="list-sub">${it.customer} · ${it.daysOverdue} days overdue</div></div><div class="list-right"><div class="list-amount">${fmA(it.inv.grand_total,it.inv.currency)}</div></div></div>`).join("")}
+    </div>`;
+  };
+  const total=Object.values(buckets).flat().reduce((s,it)=>s+(it.inv.grand_total||0),0);
+  modal("⏰ Aging Report",`
+    <div style="background:linear-gradient(135deg,var(--red-dim),var(--amber-dim));padding:16px;border-radius:14px;margin-bottom:14px;text-align:center;">
+      <div style="font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:1px;">Total Overdue</div>
+      <div style="font-size:28px;font-family:var(--mono);font-weight:300;color:var(--red);">${fmA(total)}</div>
+    </div>
+    ${renderBucket(buckets.current,"1-30 days","var(--amber)")}
+    ${renderBucket(buckets.b31,"31-60 days","#f59e0b")}
+    ${renderBucket(buckets.b61,"61-90 days","#ef4444")}
+    ${renderBucket(buckets.b90,"90+ days (critical)","#dc2626")}
+    ${total===0?`<div class="empty"><div class="empty-icon">✅</div><p>No overdue invoices!</p></div>`:""}`,
+    `<button class="btn btn-secondary" onclick="closeModal(true)">${t("close")}</button>`,true);
+}
+
+// ── TRIAL BALANCE ──
+function showTrialBalance(){
+  const rows=S.accounts.map(a=>{
+    const bal=a.balance||0;
+    return `<div class="list-item"><div class="list-icon">${AICONS[a.type]}</div><div class="list-content"><div class="list-title">${a.name}</div><div class="list-sub">${a.type} · ${a.currency}</div></div><div class="list-right"><div class="list-amount" style="color:${a.type==="credit"?"var(--red)":bal>=0?"var(--green)":"var(--red)"};">${a.type==="credit"?"−":""}${fmA(bal,a.currency)}</div></div></div>`;
+  }).join("")||`<div class="empty"><p>No accounts</p></div>`;
+  const assets=S.accounts.filter(a=>a.type!=="credit").reduce((s,a)=>s+(a.balance||0),0);
+  const liab=S.accounts.filter(a=>a.type==="credit").reduce((s,a)=>s+(a.balance||0),0);
+  modal("⚖️ Trial Balance",`
+    <div class="stat-grid">
+      <div class="stat-card green"><div class="sc-label">Total Assets</div><div class="sc-value" style="color:var(--green);font-size:18px;">${fmA(assets)}</div></div>
+      <div class="stat-card red"><div class="sc-label">Total Liabilities</div><div class="sc-value" style="color:var(--red);font-size:18px;">${fmA(liab)}</div></div>
+    </div>
+    <div style="background:linear-gradient(135deg,var(--accent-dim),var(--purple-dim));padding:14px;border-radius:12px;margin-bottom:14px;text-align:center;">
+      <div style="font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:1px;">Net (Equity)</div>
+      <div style="font-size:24px;font-family:var(--mono);font-weight:300;color:var(--accent);">${fmA(assets-liab)}</div>
+    </div>
+    <div class="card">${rows}</div>`,
+    `<button class="btn btn-secondary" onclick="closeModal(true)">${t("close")}</button>`,true);
+}
+
+// ── PROFIT & LOSS ──
+function showProfitLoss(){
+  // This month
+  const now=new Date();
+  const ms=`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,"0")}-01`;
+  const lm=new Date(now.getFullYear(),now.getMonth()-1,1);
+  const lms=`${lm.getFullYear()}-${String(lm.getMonth()+1).padStart(2,"0")}-01`;
+  const lme=ms;
+  
+  const thisI=S.transactions.filter(tx=>tx.type==="income"&&tx.date>=ms).reduce((s,tx)=>s+tx.amount,0);
+  const thisE=S.transactions.filter(tx=>tx.type==="expense"&&tx.date>=ms).reduce((s,tx)=>s+tx.amount,0);
+  const lastI=S.transactions.filter(tx=>tx.type==="income"&&tx.date>=lms&&tx.date<lme).reduce((s,tx)=>s+tx.amount,0);
+  const lastE=S.transactions.filter(tx=>tx.type==="expense"&&tx.date>=lms&&tx.date<lme).reduce((s,tx)=>s+tx.amount,0);
+  
+  // Categories breakdown
+  const expByCategory={};
+  S.transactions.filter(tx=>tx.type==="expense"&&tx.date>=ms).forEach(tx=>{
+    expByCategory[tx.category||"other"]=(expByCategory[tx.category||"other"]||0)+tx.amount;
+  });
+  const expRows=Object.entries(expByCategory).sort((a,b)=>b[1]-a[1]).map(([cat,amt])=>{
+    const pct=thisE>0?(amt/thisE*100).toFixed(1):0;
+    return `<div class="list-item"><div class="list-content"><div class="list-title">${cat}</div><div class="list-sub">${pct}%</div></div><div class="list-right"><div class="list-amount" style="color:var(--red);">${fmA(amt)}</div></div></div>`;
+  }).join("")||`<div class="empty"><p>No expenses this month</p></div>`;
+  
+  const netNow=thisI-thisE,netLast=lastI-lastE;
+  const change=netLast!==0?((netNow-netLast)/Math.abs(netLast)*100).toFixed(1):0;
+  
+  modal("📈 Profit & Loss (This Month)",`
+    <div style="background:linear-gradient(135deg,${netNow>=0?"var(--green-dim)":"var(--red-dim)"},var(--accent-dim));padding:18px;border-radius:14px;margin-bottom:14px;text-align:center;">
+      <div style="font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:1px;">Net Profit</div>
+      <div style="font-size:32px;font-family:var(--mono);font-weight:300;color:${netNow>=0?"var(--green)":"var(--red)"};">${fmA(netNow)}</div>
+      ${netLast!==0?`<div style="font-size:12px;color:var(--text3);margin-top:6px;">vs Last Month: ${change>=0?"📈":"📉"} ${change}%</div>`:""}
+    </div>
+    <div class="stat-grid">
+      <div class="stat-card green"><div class="sc-label">Income</div><div class="sc-value" style="color:var(--green);font-size:18px;">${fmA(thisI)}</div></div>
+      <div class="stat-card red"><div class="sc-label">Expenses</div><div class="sc-value" style="color:var(--red);font-size:18px;">${fmA(thisE)}</div></div>
+    </div>
+    <div style="font-size:11px;color:var(--text3);text-transform:uppercase;margin-bottom:8px;">Expense Breakdown</div>
+    <div class="card">${expRows}</div>`,
+    `<button class="btn btn-secondary" onclick="closeModal(true)">${t("close")}</button>`,true);
+}
+
+// ── TOP PRODUCTS ──
+function showTopProducts(){
+  const counts={};
+  S.invoices.forEach(inv=>{
+    (inv.items||[]).forEach(it=>{
+      if(!it.product_id)return;
+      if(!counts[it.product_id])counts[it.product_id]={qty:0,revenue:0,name:it.name};
+      counts[it.product_id].qty+=it.qty||0;
+      counts[it.product_id].revenue+=it.total||0;
+    });
+  });
+  const sorted=Object.entries(counts).sort((a,b)=>b[1].revenue-a[1].revenue).slice(0,20);
+  const rows=sorted.map(([pid,d],i)=>`<div class="list-item"><div class="list-icon">${i<3?["🥇","🥈","🥉"][i]:"📦"}</div><div class="list-content"><div class="list-title">${d.name}</div><div class="list-sub">${d.qty} sold</div></div><div class="list-right"><div class="list-amount">${fmA(d.revenue)}</div></div></div>`).join("")||`<div class="empty"><p>No products sold yet</p></div>`;
+  modal("🏆 Top Products",`<div class="card">${rows}</div>`,`<button class="btn btn-secondary" onclick="closeModal(true)">${t("close")}</button>`,true);
+}
+
+// ── TOP CUSTOMERS ──
+function showTopCustomers(){
+  const counts={};
+  S.invoices.forEach(inv=>{
+    if(!inv.customer_id)return;
+    if(!counts[inv.customer_id])counts[inv.customer_id]={count:0,total:0};
+    counts[inv.customer_id].count++;
+    counts[inv.customer_id].total+=inv.grand_total||0;
+  });
+  const sorted=Object.entries(counts).sort((a,b)=>b[1].total-a[1].total).slice(0,20);
+  const rows=sorted.map(([cid,d],i)=>{
+    const c=getCust(cid);
+    return `<div class="list-item"><div class="list-icon">${i<3?["🥇","🥈","🥉"][i]:"👤"}</div><div class="list-content"><div class="list-title">${c?.name||"—"}</div><div class="list-sub">${d.count} invoices · ${c?.customer_code||""}</div></div><div class="list-right"><div class="list-amount">${fmA(d.total)}</div></div></div>`;
+  }).join("")||`<div class="empty"><p>No customers yet</p></div>`;
+  modal("⭐ Top Customers",`<div class="card">${rows}</div>`,`<button class="btn btn-secondary" onclick="closeModal(true)">${t("close")}</button>`,true);
 }
 
 function showList(type,from,to){
@@ -2034,6 +2265,10 @@ function rSet(){
     <div class="card"><div class="card-head"><span class="card-title">${t("data")}</span></div><div class="card-body" style="display:flex;gap:8px;flex-wrap:wrap;">
       <button class="btn btn-secondary btn-sm" onclick="exportJSON()">📦 ${t("backup")}</button>
       <button class="btn btn-amber btn-sm" onclick="recalcBalances()">🔄 Fix Balances</button>
+    </div></div>
+    <div class="card"><div class="card-head"><span class="card-title">Security & Audit</span></div><div class="card-body" style="display:flex;gap:8px;flex-wrap:wrap;">
+      <button class="btn btn-secondary btn-sm" onclick="showAuditLog()">📋 Activity Log</button>
+      ${localStorage.getItem("lockedUntil")?`<button class="btn btn-amber btn-sm" onclick="unlockPeriod()">🔓 Unlock (${localStorage.getItem("lockedUntil")})</button>`:`<button class="btn btn-secondary btn-sm" onclick="lockPeriod()">🔒 Lock Period</button>`}
     </div></div>`;
 }
 function saveProfile(){S.profile={name:$("pf-name")?.value||"",phone:$("pf-phone")?.value||"",email:$("pf-email")?.value||"",address:$("pf-addr")?.value||""};localStorage.setItem("profile",JSON.stringify(S.profile));toast(t("saved"),"ok");}
