@@ -238,7 +238,17 @@ function calcNum(n){
 }
 function calcOp(op){
   const c=window._calc;
-  if(c.prev!==null&&!c.reset){calcEq();}
+  if(c.prev!==null&&!c.reset){
+    // Compute pending operation first
+    const cur=parseFloat(c.cur);let res=0;
+    if(c.op==="+")res=c.prev+cur;
+    else if(c.op==="-")res=c.prev-cur;
+    else if(c.op==="*")res=c.prev*cur;
+    else if(c.op==="/")res=cur===0?0:c.prev/cur;
+    else if(c.op==="%")res=c.prev*cur/100;
+    c.cur=String(Math.round(res*100)/100);
+    $("calcDisp").value=c.cur;
+  }
   c.prev=parseFloat(c.cur);c.op=op;c.reset=true;
   $("calcHistory").textContent=`${c.prev} ${op}`;
 }
@@ -691,35 +701,88 @@ function setDateF(f,refreshFn){
 
 // Recalculate all account balances from transactions (fixes data inconsistencies)
 async function recalcBalances(){
-  if(!confirm("Recalculate all account balances?\n\nThis will reset balances based on:\n• Receipt Vouchers (+)\n• Payment Vouchers (-)\n• Paid Invoices (+)\n• Manual Transactions (income/expense)\n\nContinue?"))return;
+  if(!confirm("Recalculate all account balances?\n\nThis recalculates from:\n• Vouchers (Receipt/Payment)\n• Paid invoices (sales + purchases)\n• Manual transactions only (not those from vouchers/invoices)\n• Initial account balances are reset to 0\n\nContinue?"))return;
   if(!lockSave())return;
   try{
     const balByAcc={};
     S.accounts.forEach(a=>{balByAcc[a.id]=0;});
-    // 1. Vouchers
+    
+    // Helper to detect if a transaction was auto-created from voucher/invoice
+    const linkedNotePattern=/(RV|PV)-\d+|(INV|POS|PINV)-\d+/;
+    
+    // 1. Vouchers - apply with credit card logic
     S.vouchers.forEach(v=>{
-      if(v.account_id&&balByAcc[v.account_id]!==undefined){
-        balByAcc[v.account_id]+=(v.type==="receipt"?v.amount:-v.amount);
+      if(!v.account_id||balByAcc[v.account_id]===undefined)return;
+      const acc=S.accounts.find(a=>a.id===v.account_id);
+      const isCredit=acc?.type==="credit";
+      // For credit card: receipt = pay down debt (decrease balance), payment = purchase (increase debt)
+      // For normal account: receipt = +, payment = -
+      let delta;
+      if(isCredit){
+        delta=v.type==="receipt"?-v.amount:v.amount;
+      }else{
+        delta=v.type==="receipt"?v.amount:-v.amount;
       }
+      balByAcc[v.account_id]+=delta;
     });
-    // 2. Paid invoices
+    
+    // 2. Paid Sales Invoices (increase cash/bank, or decrease credit card for refunds — not standard)
     S.invoices.forEach(inv=>{
-      if(inv.status==="paid"&&inv.account_id&&balByAcc[inv.account_id]!==undefined){
-        balByAcc[inv.account_id]+=(inv.grand_total||0);
-      }
+      if(inv.status!=="paid")return;
+      if(!inv.account_id||balByAcc[inv.account_id]===undefined)return;
+      const acc=S.accounts.find(a=>a.id===inv.account_id);
+      const isCredit=acc?.type==="credit";
+      // Sale: customer pays us. Normal acc: +. Credit card: unusual, treat as +
+      balByAcc[inv.account_id]+=(inv.grand_total||0);
     });
-    // 3. Manual transactions (not auto-created from vouchers)
+    
+    // 3. Purchase Invoices (paid, not credit) - decrease account
+    S.purchase_invoices.forEach(pinv=>{
+      if(pinv.payment_method==="credit")return;
+      if(!pinv.account_id||balByAcc[pinv.account_id]===undefined)return;
+      const acc=S.accounts.find(a=>a.id===pinv.account_id);
+      const isCredit=acc?.type==="credit";
+      // Buying with credit card: increase debt; buying with cash/bank: decrease balance
+      const delta=isCredit?(pinv.grand_total||0):-(pinv.grand_total||0);
+      balByAcc[pinv.account_id]+=delta;
+    });
+    
+    // 4. Manual transactions (skip those auto-created from vouchers/invoices/purchase invoices)
     S.transactions.forEach(tx=>{
-      // Skip transactions auto-created from vouchers (they contain RV-/PV- in note)
-      if(tx.note&&/^(RV|PV)-/.test(tx.note))return;
-      // Skip transactions auto-created from invoices
-      if(tx.note&&/^(INV|POS)-/.test(tx.note))return;
-      if(tx.account_id&&balByAcc[tx.account_id]!==undefined){
-        balByAcc[tx.account_id]+=(tx.type==="income"?tx.amount:-tx.amount);
+      if(!tx.account_id||balByAcc[tx.account_id]===undefined)return;
+      // Skip linked: detect by note containing voucher/invoice number patterns
+      if(tx.note&&linkedNotePattern.test(tx.note))return;
+      // Skip transfers (already balanced)
+      if(tx.category==="transfer")return;
+      const acc=S.accounts.find(a=>a.id===tx.account_id);
+      const isCredit=acc?.type==="credit";
+      // For credit card: income = pay down, expense = purchase (increase debt)
+      let delta;
+      if(isCredit){
+        delta=tx.type==="income"?-tx.amount:tx.amount;
+      }else{
+        delta=tx.type==="income"?tx.amount:-tx.amount;
       }
+      balByAcc[tx.account_id]+=delta;
     });
+    
+    // 5. Apply transfer transactions separately (they come in pairs: one expense + one income)
+    S.transactions.forEach(tx=>{
+      if(tx.category!=="transfer")return;
+      if(!tx.account_id||balByAcc[tx.account_id]===undefined)return;
+      const acc=S.accounts.find(a=>a.id===tx.account_id);
+      const isCredit=acc?.type==="credit";
+      let delta;
+      if(isCredit){
+        delta=tx.type==="income"?-tx.amount:tx.amount;
+      }else{
+        delta=tx.type==="income"?tx.amount:-tx.amount;
+      }
+      balByAcc[tx.account_id]+=delta;
+    });
+    
     for(const acc of S.accounts){
-      const newBal=balByAcc[acc.id]||0;
+      const newBal=Math.round((balByAcc[acc.id]||0)*100)/100;
       await upd("accounts",acc.id,{balance:newBal});
       acc.balance=newBal;
     }
@@ -946,7 +1009,10 @@ function getAccName(id){return getAcc(id)?.name||"—";}
 function getCust(id){return S.customers.find(x=>x.id===id);}
 function getCustName(id){return getCust(id)?.name||"—";}
 function todayTx(type){return S.transactions.filter(tx=>tx.date===today()&&tx.type===type).reduce((s,tx)=>s+tx.amount,0);}
-function outstandingTotal(){return S.invoices.filter(i=>i.status==="submitted").reduce((s,i)=>s+(i.grand_total||0),0);}
+function outstandingTotal(){
+  // Sum all submitted invoices minus all receipts applied to those customers
+  return S.customers.reduce((s,c)=>s+calcCustomerBalance(c.id),0);
+}
 function cashOnHand(){return S.accounts.filter(a=>a.type==="cash").reduce((s,a)=>s+(a.balance||0),0);}
 function denominationsTotal(){return AED_DENOMS.reduce((s,d)=>s+(d*(S.denominations[d]||0)),0);}
 
@@ -2249,19 +2315,18 @@ async function delSupp(id){if(!confirm(t("confirmDel")))return;await del("suppli
 // ── DEBTORS & CREDITORS ──
 // Calculate balance for each customer: total invoiced - total paid
 function calcCustomerBalance(custId){
+  // What customer owes us = Submitted invoices (not yet paid) - any receipts from them
   const invs=S.invoices.filter(i=>i.customer_id===custId);
-  const totInvoiced=invs.reduce((s,i)=>s+(i.grand_total||0),0);
-  // Paid invoices count as paid
-  const totPaid=invs.filter(i=>i.status==="paid").reduce((s,i)=>s+(i.grand_total||0),0);
-  // Receipts from this customer (party matches name)
+  // Only "submitted" status counts as outstanding debt (paid invoices = settled)
+  const outstanding=invs.filter(i=>i.status==="submitted").reduce((s,i)=>s+(i.grand_total||0),0);
+  // Receipts from this customer (party matches name) - applied to outstanding debt
   const cust=getCust(custId);
   let receiptTotal=0;
   if(cust){
     receiptTotal=S.vouchers.filter(v=>v.type==="receipt"&&(v.party||"").toLowerCase()===(cust.name||"").toLowerCase()).reduce((s,v)=>s+v.amount,0);
   }
-  // Balance = invoiced - paid - receipts
-  // Positive means customer owes us (debtor)
-  return totInvoiced - totPaid - receiptTotal;
+  // Balance: positive = customer owes us, 0 or negative = settled/overpaid
+  return Math.max(0, outstanding - receiptTotal);
 }
 // Calculate balance for each supplier: total paid out - what we owe
 function calcSupplierBalance(supId){
