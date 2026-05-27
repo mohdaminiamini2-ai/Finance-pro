@@ -481,6 +481,9 @@ async function generateTestData(){
     for(const p of testProds){const d=await ins("products",p);if(d){prods.push(d);S.products.push(d);created++;}}
     
     if(acc1&&acc2&&prods.length>=5&&custs.length>=3){
+      let cashBalance=acc1.balance||0;
+      let bankBalance=acc2.balance||0;
+      
       // 5. Sales Invoices
       for(let i=1;i<=8;i++){
         const cust=custs[i%custs.length];
@@ -492,9 +495,26 @@ async function generateTestData(){
         const sub=items.reduce((s,it)=>s+it.total,0);
         const tax=sub*0.05;const grand=sub+tax;
         const d=new Date();d.setDate(d.getDate()-i*2);
-        const inv=await ins("invoices",{invoice_no:`TEST-INV-${String(i).padStart(4,"0")}`,date:d.toISOString().split("T")[0],customer_id:cust.id,currency:"AED",payment_method:i%3===0?"credit":"cash",tax_pct:5,disc_pct:0,subtotal:sub,tax_amount:tax,disc_amount:0,grand_total:grand,account_id:acc1.id,status:i%3===0?"submitted":"paid",items,is_test:true});
-        if(inv){S.invoices.unshift(inv);created++;}
+        const dStr=d.toISOString().split("T")[0];
+        const isPaid=i%3!==0;
+        const inv=await ins("invoices",{invoice_no:`TEST-INV-${String(i).padStart(4,"0")}`,date:dStr,customer_id:cust.id,currency:"AED",payment_method:i%3===0?"credit":"cash",tax_pct:5,disc_pct:0,subtotal:sub,tax_amount:tax,disc_amount:0,grand_total:grand,account_id:acc1.id,status:isPaid?"paid":"submitted",items,is_test:true});
+        if(inv){
+          S.invoices.unshift(inv);created++;
+          // If paid, add to cash balance & create transaction
+          if(isPaid){
+            cashBalance+=grand;
+            const tx=await ins("transactions",{type:"income",amount:grand,currency:"AED",account_id:acc1.id,category:"sales",note:inv.invoice_no,date:dStr,is_test:true});
+            if(tx)S.transactions.unshift(tx);
+          }
+          // Reduce product stock
+          for(const it of items){
+            const p=S.products.find(x=>x.id===it.product_id);
+            if(p){p.stock=Math.max(0,(p.stock||0)-it.qty);await upd("products",p.id,{stock:p.stock});}
+          }
+        }
       }
+      // Update cash account balance once
+      await upd("accounts",acc1.id,{balance:cashBalance});acc1.balance=cashBalance;
       
       // 6. Purchase Invoices
       if(supps.length>=2){
@@ -504,9 +524,21 @@ async function generateTestData(){
           const items=[{product_id:p.id,name:p.name,qty:10,unit_price:p.cost_price,total:10*p.cost_price}];
           const sub=items[0].total;const grand=sub;
           const d=new Date();d.setDate(d.getDate()-i*5);
-          const pinv=await ins("purchase_invoices",{invoice_no:`TEST-PINV-${String(i).padStart(4,"0")}`,supplier_id:sup.id,date:d.toISOString().split("T")[0],currency:"AED",payment_method:"cash",tax_pct:0,disc_pct:0,subtotal:sub,tax_amount:0,disc_amount:0,grand_total:grand,account_id:acc2.id,status:"submitted",items,is_test:true});
-          if(pinv){S.purchase_invoices.unshift(pinv);created++;}
+          const dStr=d.toISOString().split("T")[0];
+          const pinv=await ins("purchase_invoices",{invoice_no:`TEST-PINV-${String(i).padStart(4,"0")}`,supplier_id:sup.id,date:dStr,currency:"AED",payment_method:"cash",tax_pct:0,disc_pct:0,subtotal:sub,tax_amount:0,disc_amount:0,grand_total:grand,account_id:acc2.id,status:"submitted",items,is_test:true});
+          if(pinv){
+            S.purchase_invoices.unshift(pinv);created++;
+            // Deduct from bank, add to stock
+            bankBalance-=grand;
+            for(const it of items){
+              const prod=S.products.find(x=>x.id===it.product_id);
+              if(prod){prod.stock=(prod.stock||0)+it.qty;await upd("products",prod.id,{stock:prod.stock});}
+            }
+            const tx=await ins("transactions",{type:"expense",amount:grand,currency:"AED",account_id:acc2.id,category:"purchase",note:pinv.invoice_no,date:dStr,is_test:true});
+            if(tx)S.transactions.unshift(tx);
+          }
         }
+        await upd("accounts",acc2.id,{balance:bankBalance});acc2.balance=bankBalance;
       }
       
       // 7. Quotations
@@ -519,27 +551,49 @@ async function generateTestData(){
         if(quote){S.quotations.unshift(quote);created++;}
       }
       
-      // 8. Vouchers
+      // 8. Vouchers (Cash Register balance updates)
+      let cashB=acc1.balance||0;
       for(let i=1;i<=3;i++){
         const cust=custs[i%custs.length];
         const d=new Date();d.setDate(d.getDate()-i);
-        const v=await ins("vouchers",{voucher_no:`TEST-RV-${String(i).padStart(4,"0")}`,type:"receipt",date:d.toISOString().split("T")[0],party:cust.name,amount:500*i,currency:"AED",payment_mode:"cash",account_id:acc1.id,note:"Test receipt",is_test:true});
-        if(v){S.vouchers.unshift(v);created++;}
+        const dStr=d.toISOString().split("T")[0];
+        const amt=500*i;
+        const v=await ins("vouchers",{voucher_no:`TEST-RV-${String(i).padStart(4,"0")}`,type:"receipt",date:dStr,party:cust.name,amount:amt,currency:"AED",payment_mode:"cash",account_id:acc1.id,note:"Test receipt",is_test:true});
+        if(v){
+          S.vouchers.unshift(v);created++;
+          cashB+=amt;
+          const tx=await ins("transactions",{type:"income",amount:amt,currency:"AED",account_id:acc1.id,category:"sales",note:`${v.voucher_no} - ${cust.name}`,date:dStr,is_test:true});
+          if(tx)S.transactions.unshift(tx);
+        }
       }
       for(let i=1;i<=3;i++){
         const sup=supps[i%supps.length];
         const d=new Date();d.setDate(d.getDate()-i);
-        const v=await ins("vouchers",{voucher_no:`TEST-PV-${String(i).padStart(4,"0")}`,type:"payment",date:d.toISOString().split("T")[0],party:sup.name,amount:300*i,currency:"AED",payment_mode:"cash",account_id:acc1.id,note:"Test payment",is_test:true});
-        if(v){S.vouchers.unshift(v);created++;}
+        const dStr=d.toISOString().split("T")[0];
+        const amt=300*i;
+        const v=await ins("vouchers",{voucher_no:`TEST-PV-${String(i).padStart(4,"0")}`,type:"payment",date:dStr,party:sup.name,amount:amt,currency:"AED",payment_mode:"cash",account_id:acc1.id,note:"Test payment",is_test:true});
+        if(v){
+          S.vouchers.unshift(v);created++;
+          cashB-=amt;
+          const tx=await ins("transactions",{type:"expense",amount:amt,currency:"AED",account_id:acc1.id,category:"other",note:`${v.voucher_no} - ${sup.name}`,date:dStr,is_test:true});
+          if(tx)S.transactions.unshift(tx);
+        }
       }
+      await upd("accounts",acc1.id,{balance:cashB});acc1.balance=cashB;
     }
     
-    // 9. Transactions
+    // 9. Transactions (also affect balance)
     const cats=TCATS;
-    for(let i=1;i<=12;i++){
-      const d=new Date();d.setDate(d.getDate()-i);
-      const tx=await ins("transactions",{type:i%3===0?"income":"expense",amount:Math.floor(Math.random()*500)+50,currency:"AED",account_id:acc1?.id,category:cats[i%cats.length],note:`[TEST] Sample ${i}`,date:d.toISOString().split("T")[0],is_test:true});
-      if(tx){S.transactions.unshift(tx);created++;}
+    if(acc1){
+      let bal=acc1.balance||0;
+      for(let i=1;i<=12;i++){
+        const d=new Date();d.setDate(d.getDate()-i);
+        const type=i%3===0?"income":"expense";
+        const amt=Math.floor(Math.random()*500)+50;
+        const tx=await ins("transactions",{type,amount:amt,currency:"AED",account_id:acc1.id,category:cats[i%cats.length],note:`[TEST] Sample ${i}`,date:d.toISOString().split("T")[0],is_test:true});
+        if(tx){S.transactions.unshift(tx);created++;bal+=(type==="income"?amt:-amt);}
+      }
+      await upd("accounts",acc1.id,{balance:bal});acc1.balance=bal;
     }
     
     // 10. Debts
@@ -1034,7 +1088,7 @@ function rCashier(){
         <div class="denom-total">
           <div style="font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">${t("totalNotes")}</div>
           <div style="font-size:24px;font-weight:300;font-family:var(--mono);color:var(--accent);" id="denomTotal">${fmA(denomTotal)}</div>
-          ${(totalCash>0||denomTotal>0)&&Math.abs(denomTotal-totalCash)>0.01?(()=>{
+          ${denomTotal>0&&totalCash>0&&Math.abs(denomTotal-totalCash)>0.01?(()=>{
             const diff=denomTotal-totalCash;
             const isOver=diff>0;
             const color=isOver?"var(--amber)":"var(--red)";
@@ -1455,17 +1509,29 @@ function checkout(){
 }
 async function completeCheckout(method){
   const accId=$("poacc")?.value;
+  if(!accId){toast("Please select an account","err");return;}
+  if(S.cart.length===0){toast("Cart is empty","err");return;}
+  // Auto-create General Customer for POS sales
+  const gen=await getOrCreateGeneralCustomer();
+  if(!gen){toast("Could not create customer","err");return;}
   const total=S.cart.reduce((s,it)=>s+it.price*it.qty,0);
   const items=S.cart.map(it=>({name:it.name,qty:it.qty,unit_price:it.price,total:it.price*it.qty,product_id:it.product_id}));
   const posNums=S.invoices.filter(i=>String(i.invoice_no||"").startsWith("POS-")).map(i=>{const m=String(i.invoice_no).match(/POS-(\d+)/);return m?parseInt(m[1]):0;});
   const invNo="POS-"+String(Math.max(0,...posNums)+1).padStart(4,"0");
   const status=method==="credit"?"submitted":"paid";
-  const inv=await ins("invoices",{invoice_no:invNo,date:today(),customer_id:null,currency:S.currency,payment_method:method,subtotal:total,grand_total:total,tax_pct:0,disc_pct:0,tax_amount:0,disc_amount:0,note:"POS Sale",account_id:accId,status,items});
+  const inv=await ins("invoices",{invoice_no:invNo,date:today(),customer_id:gen.id,currency:S.currency,payment_method:method,subtotal:total,grand_total:total,tax_pct:0,disc_pct:0,tax_amount:0,disc_amount:0,note:"POS Sale",account_id:accId,status,items});
   if(!inv)return;
   S.invoices.unshift(inv);
   for(const it of S.cart){const p=S.products.find(x=>x.id===it.product_id);if(p){p.stock=Math.max(0,(p.stock||0)-it.qty);await upd("products",p.id,{stock:p.stock});}}
   if(method!=="credit"&&accId){
-    const acc=getAcc(accId);if(acc){acc.balance=(acc.balance||0)+total;await upd("accounts",accId,{balance:acc.balance});}
+    const acc=getAcc(accId);
+    if(acc){
+      // Credit card logic: reverse for credit accounts
+      const isCredit=acc.type==="credit";
+      const delta=isCredit?-total:total; // For credit card sale: this would be unusual; assume normal increase
+      acc.balance=(acc.balance||0)+total;
+      await upd("accounts",accId,{balance:acc.balance});
+    }
     const tx=await ins("transactions",{type:"income",amount:total,currency:S.currency,account_id:accId,category:"sales",note:invNo,date:today()});
     if(tx)S.transactions.unshift(tx);
   }
