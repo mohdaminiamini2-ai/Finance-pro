@@ -194,6 +194,410 @@ async function showAuditLog(){
     `<button class="btn btn-secondary" onclick="closeModal(true)">${t("close")}</button>`,true);
 }
 
+// ═════════════════════════════════════════
+// QUICK CALCULATOR
+// ═════════════════════════════════════════
+function showCalculator(){
+  modal("🧮 Quick Calculator",`
+    <div style="background:var(--glass);padding:14px;border-radius:10px;margin-bottom:12px;">
+      <input class="fc" id="calcDisp" value="0" readonly style="font-family:var(--mono);font-size:24px;text-align:right;background:rgba(0,0,0,0.2);"/>
+      <div style="font-size:11px;color:var(--text3);margin-top:6px;" id="calcHistory">Enter calculation</div>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:6px;">
+      <button class="btn btn-secondary" onclick="calcClear()">C</button>
+      <button class="btn btn-secondary" onclick="calcBack()">⌫</button>
+      <button class="btn btn-secondary" onclick="calcOp('%')">%</button>
+      <button class="btn btn-primary" onclick="calcOp('/')">÷</button>
+      <button class="btn btn-ghost" onclick="calcNum('7')">7</button>
+      <button class="btn btn-ghost" onclick="calcNum('8')">8</button>
+      <button class="btn btn-ghost" onclick="calcNum('9')">9</button>
+      <button class="btn btn-primary" onclick="calcOp('*')">×</button>
+      <button class="btn btn-ghost" onclick="calcNum('4')">4</button>
+      <button class="btn btn-ghost" onclick="calcNum('5')">5</button>
+      <button class="btn btn-ghost" onclick="calcNum('6')">6</button>
+      <button class="btn btn-primary" onclick="calcOp('-')">−</button>
+      <button class="btn btn-ghost" onclick="calcNum('1')">1</button>
+      <button class="btn btn-ghost" onclick="calcNum('2')">2</button>
+      <button class="btn btn-ghost" onclick="calcNum('3')">3</button>
+      <button class="btn btn-primary" onclick="calcOp('+')">+</button>
+      <button class="btn btn-ghost" onclick="calcNum('0')" style="grid-column:span 2;">0</button>
+      <button class="btn btn-ghost" onclick="calcNum('.')">.</button>
+      <button class="btn btn-success" onclick="calcEq()">=</button>
+    </div>`,
+    `<button class="btn btn-secondary" onclick="closeModal(true)">${t("close")}</button>`);
+  window._calc={cur:"0",prev:null,op:null,reset:false};
+}
+function calcNum(n){
+  const c=window._calc;
+  if(c.reset){c.cur=n==="."?"0.":n;c.reset=false;}
+  else{
+    if(n==="."&&c.cur.includes("."))return;
+    c.cur=c.cur==="0"&&n!=="."?n:c.cur+n;
+  }
+  $("calcDisp").value=c.cur;
+}
+function calcOp(op){
+  const c=window._calc;
+  if(c.prev!==null&&!c.reset){calcEq();}
+  c.prev=parseFloat(c.cur);c.op=op;c.reset=true;
+  $("calcHistory").textContent=`${c.prev} ${op}`;
+}
+function calcEq(){
+  const c=window._calc;
+  if(c.prev===null||c.op===null)return;
+  const cur=parseFloat(c.cur);let res=0;
+  if(c.op==="+")res=c.prev+cur;
+  else if(c.op==="-")res=c.prev-cur;
+  else if(c.op==="*")res=c.prev*cur;
+  else if(c.op==="/")res=cur===0?0:c.prev/cur;
+  else if(c.op==="%")res=c.prev*cur/100;
+  $("calcHistory").textContent=`${c.prev} ${c.op} ${cur} =`;
+  c.cur=String(Math.round(res*100)/100);
+  c.prev=null;c.op=null;c.reset=true;
+  $("calcDisp").value=c.cur;
+}
+function calcClear(){window._calc={cur:"0",prev:null,op:null,reset:false};$("calcDisp").value="0";$("calcHistory").textContent="Enter calculation";}
+function calcBack(){const c=window._calc;c.cur=c.cur.length>1?c.cur.slice(0,-1):"0";$("calcDisp").value=c.cur;}
+
+// ═════════════════════════════════════════
+// QUICK STATS
+// ═════════════════════════════════════════
+function getQuickStats(){
+  return {
+    customers:S.customers.length,
+    suppliers:S.suppliers.length,
+    products:S.products.length,
+    invoices:S.invoices.length,
+    pInvoices:S.purchase_invoices.length,
+    vouchers:S.vouchers.length,
+    transactions:S.transactions.length,
+    quotations:S.quotations.length,
+    debts:S.debts.length,
+    cheques:S.cheques_in.length+S.cheques_out.length,
+    accounts:S.accounts.length,
+  };
+}
+function showQuickStats(){
+  const s=getQuickStats();
+  const grid=[
+    ["👥 Customers",s.customers],["🏭 Suppliers",s.suppliers],
+    ["📦 Products",s.products],["🏦 Accounts",s.accounts],
+    ["🧾 Sales Invoices",s.invoices],["🛒 Purchase Invoices",s.pInvoices],
+    ["📋 Vouchers",s.vouchers],["⇄ Transactions",s.transactions],
+    ["📝 Quotations",s.quotations],["💼 Debts/Credits",s.debts],
+    ["📥📤 Cheques",s.cheques],
+  ];
+  const html=grid.map(([l,v])=>`<div style="background:var(--glass);padding:14px;border-radius:10px;display:flex;justify-content:space-between;align-items:center;">
+    <div style="font-size:13px;color:var(--text2);">${l}</div>
+    <div style="font-size:20px;font-family:var(--mono);font-weight:700;color:var(--accent);">${v}</div>
+  </div>`).join("");
+  modal("📊 Quick Stats",`<div style="display:grid;gap:8px;">${html}</div>`,
+    `<button class="btn btn-secondary" onclick="closeModal(true)">${t("close")}</button>`,true);
+}
+
+// ═════════════════════════════════════════
+// SEARCH EVERYWHERE
+// ═════════════════════════════════════════
+function showGlobalSearch(){
+  modal("🔍 Search Everywhere",`
+    <div class="search-box"><span class="search-icon">🔍</span>
+      <input class="fc" id="globSearch" placeholder="Search invoices, customers, products, vouchers..." oninput="runGlobalSearch(this.value)" autofocus/>
+    </div>
+    <div id="globResults" style="margin-top:12px;"></div>`,
+    `<button class="btn btn-secondary" onclick="closeModal(true)">${t("close")}</button>`,true);
+}
+function runGlobalSearch(q){
+  const res=$("globResults");if(!res)return;
+  if(!q||q.length<2){res.innerHTML=`<div style="text-align:center;padding:20px;color:var(--text3);font-size:12px;">Type at least 2 characters</div>`;return;}
+  const ql=q.toLowerCase();
+  const groups=[];
+  
+  const invs=S.invoices.filter(i=>(i.invoice_no||"").toLowerCase().includes(ql)||getCustName(i.customer_id).toLowerCase().includes(ql)||String(i.grand_total||"").includes(q)).slice(0,5);
+  if(invs.length)groups.push({title:"🧾 Invoices",items:invs.map(i=>`<div class="list-item" onclick="closeModal(true);nav('invoices');setTimeout(()=>showInvDetail('${i.id}'),200)"><div class="list-icon">🧾</div><div class="list-content"><div class="list-title">${i.invoice_no}</div><div class="list-sub">${getCustName(i.customer_id)} · ${fmA(i.grand_total)}</div></div></div>`).join("")});
+  
+  const pinvs=S.purchase_invoices.filter(p=>(p.invoice_no||"").toLowerCase().includes(ql)||getSuppName(p.supplier_id).toLowerCase().includes(ql)).slice(0,5);
+  if(pinvs.length)groups.push({title:"🛒 Purchase Invoices",items:pinvs.map(p=>`<div class="list-item" onclick="closeModal(true);nav('purchaseInv');setTimeout(()=>showPInvDetail('${p.id}'),200)"><div class="list-icon">🛒</div><div class="list-content"><div class="list-title">${p.invoice_no}</div><div class="list-sub">${getSuppName(p.supplier_id)} · ${fmA(p.grand_total)}</div></div></div>`).join("")});
+  
+  const vchs=S.vouchers.filter(v=>(v.voucher_no||"").toLowerCase().includes(ql)||(v.party||"").toLowerCase().includes(ql)||(v.note||"").toLowerCase().includes(ql)||String(v.amount||"").includes(q)).slice(0,5);
+  if(vchs.length)groups.push({title:"📋 Vouchers",items:vchs.map(v=>`<div class="list-item" onclick="closeModal(true);nav('vouchers');setTimeout(()=>showVoucherDetail('${v.id}'),200)"><div class="list-icon">📋</div><div class="list-content"><div class="list-title">${v.voucher_no}</div><div class="list-sub">${v.party||"—"} · ${fmA(v.amount)}</div></div></div>`).join("")});
+  
+  const custs=S.customers.filter(c=>(c.name||"").toLowerCase().includes(ql)||(c.customer_code||"").toLowerCase().includes(ql)||(c.phone||"").includes(q)).slice(0,5);
+  if(custs.length)groups.push({title:"👥 Customers",items:custs.map(c=>`<div class="list-item" onclick="closeModal(true);nav('customers');setTimeout(()=>showAddCustomer('${c.id}'),200)"><div class="list-icon">👤</div><div class="list-content"><div class="list-title">${c.name}</div><div class="list-sub">${c.customer_code||"—"} · ${c.phone||""}</div></div></div>`).join("")});
+  
+  const supps=S.suppliers.filter(s=>(s.name||"").toLowerCase().includes(ql)||(s.phone||"").includes(q)).slice(0,5);
+  if(supps.length)groups.push({title:"🏭 Suppliers",items:supps.map(s=>`<div class="list-item" onclick="closeModal(true);nav('suppliers');setTimeout(()=>showAddSupp('${s.id}'),200)"><div class="list-icon">🏭</div><div class="list-content"><div class="list-title">${s.name}</div><div class="list-sub">${s.phone||""}</div></div></div>`).join("")});
+  
+  const prods=S.products.filter(p=>(p.name||"").toLowerCase().includes(ql)||(p.sku||"").toLowerCase().includes(ql)).slice(0,5);
+  if(prods.length)groups.push({title:"📦 Products",items:prods.map(p=>`<div class="list-item" onclick="closeModal(true);nav('inventory');setTimeout(()=>showAddProduct('${p.id}'),200)"><div class="list-icon">📦</div><div class="list-content"><div class="list-title">${p.name}</div><div class="list-sub">${p.sku||"—"} · Stock: ${p.stock||0} · ${fmA(p.sell_price||0)}</div></div></div>`).join("")});
+  
+  if(groups.length===0){res.innerHTML=`<div style="text-align:center;padding:30px;color:var(--text3);">No results found</div>`;return;}
+  res.innerHTML=groups.map(g=>`<div style="margin-bottom:14px;"><div style="font-size:11px;color:var(--text3);text-transform:uppercase;margin-bottom:6px;font-weight:600;">${g.title}</div><div class="card">${g.items}</div></div>`).join("");
+}
+
+// ═════════════════════════════════════════
+// RECENT ACTIVITY FEED
+// ═════════════════════════════════════════
+function getRecentActivity(){
+  const all=[];
+  S.invoices.slice(0,20).forEach(i=>all.push({type:"invoice",time:i.created_at||i.date,id:i.id,title:`Invoice ${i.invoice_no}`,sub:`${getCustName(i.customer_id)} · ${fmA(i.grand_total||0)}`,icon:"🧾"}));
+  S.vouchers.slice(0,20).forEach(v=>all.push({type:"voucher",time:v.created_at||v.date,id:v.id,title:`${v.voucher_no}`,sub:`${v.party||"—"} · ${v.type==="receipt"?"+":"−"}${fmA(v.amount)}`,icon:v.type==="receipt"?"📥":"📤"}));
+  S.transactions.slice(0,20).forEach(tx=>all.push({type:"tx",time:tx.created_at||tx.date,id:tx.id,title:tx.note||tx.category||"Transaction",sub:`${getAccName(tx.account_id)} · ${tx.type==="income"?"+":"−"}${fmA(tx.amount)}`,icon:tx.type==="income"?"↑":"↓"}));
+  return all.sort((a,b)=>new Date(b.time)-new Date(a.time)).slice(0,15);
+}
+
+// ═════════════════════════════════════════
+// EXPORT / IMPORT BACKUP
+// ═════════════════════════════════════════
+function exportBackup(){
+  const data={
+    version:"v8",
+    exportedAt:new Date().toISOString(),
+    profile:S.profile,
+    settings:{lang:S.lang,currency:S.currency,companyTRN:localStorage.getItem("companyTRN"),companyLogo:localStorage.getItem("companyLogo"),defaultTax:localStorage.getItem("defaultTax")},
+    accounts:S.accounts,
+    customers:S.customers,
+    suppliers:S.suppliers,
+    products:S.products,
+    invoices:S.invoices,
+    purchase_invoices:S.purchase_invoices,
+    quotations:S.quotations,
+    vouchers:S.vouchers,
+    transactions:S.transactions,
+    cheques_in:S.cheques_in,
+    cheques_out:S.cheques_out,
+    debts:S.debts,
+    budgets:S.budgets,
+    goals:S.goals,
+    recurring_expenses:S.recurring_expenses,
+  };
+  const json=JSON.stringify(data,null,2);
+  const blob=new Blob([json],{type:"application/json"});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement("a");a.href=url;
+  a.download=`finance-backup-${today()}.json`;
+  document.body.appendChild(a);a.click();document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  toast("Backup downloaded ✓","ok");
+}
+
+function showImportDialog(){
+  modal("📥 Import Backup",`
+    <div class="alert alert-amber" style="margin-bottom:12px;">
+      ⚠️ Warning: This will <strong>ADD</strong> data from the backup file to your current data. Existing records won't be deleted, but duplicates may appear.
+    </div>
+    <div class="fg"><label class="fl">Select backup JSON file</label>
+      <input class="fc" type="file" id="bkupFile" accept=".json"/>
+    </div>`,
+    `<button class="btn btn-secondary" onclick="closeModal()">${t("cancel")}</button>
+     <button class="btn btn-primary" onclick="runImport()">Import</button>`);
+}
+async function runImport(){
+  const file=$("bkupFile")?.files?.[0];
+  if(!file){toast("Select a file","err");return;}
+  try{
+    const text=await file.text();
+    const data=JSON.parse(text);
+    if(!data.version){toast("Invalid backup file","err");return;}
+    if(!confirm(`Backup from ${data.exportedAt?.split("T")[0]||"unknown"}\nImport all data?`))return;
+    
+    const tables=[
+      ["accounts",data.accounts],["customers",data.customers],["suppliers",data.suppliers],
+      ["products",data.products],["invoices",data.invoices],["purchase_invoices",data.purchase_invoices],
+      ["quotations",data.quotations],["vouchers",data.vouchers],["transactions",data.transactions],
+      ["cheques_in",data.cheques_in],["cheques_out",data.cheques_out],["debts",data.debts],
+      ["budgets",data.budgets],["goals",data.goals],["recurring_expenses",data.recurring_expenses]
+    ];
+    let imported=0;
+    for(const [table,items] of tables){
+      if(!Array.isArray(items))continue;
+      for(const item of items){
+        const {id,user_id,created_at,...row}=item;
+        const d=await ins(table,row);
+        if(d){
+          if(S[table])S[table].push(d);
+          imported++;
+        }
+      }
+    }
+    closeModal(true);
+    toast(`Imported ${imported} records ✓`,"ok");
+    // Reload data
+    if(S.user)await loadAll(S.user);
+    render(S.page);
+  }catch(e){console.error(e);toast("Import failed: "+e.message,"err");}
+}
+
+// ═════════════════════════════════════════
+// TEST DATA - GENERATE & CLEAR
+// ═════════════════════════════════════════
+async function generateTestData(){
+  if(!confirm("Generate sample test data?\n\n• 3 accounts (Cash, Bank, Credit Card)\n• 5 customers\n• 3 suppliers\n• 10 products\n• 8 sales invoices\n• 3 purchase invoices\n• 2 quotations\n• 6 vouchers\n• 12 transactions\n• 2 debts\n\nAll items will be tagged as TEST and can be cleared later."))return;
+  if(!lockSave())return;
+  let created=0;
+  try{
+    toast("Generating... please wait","info");
+    
+    // 1. Accounts
+    const acc1=await ins("accounts",{type:"cash",name:"[TEST] Cash Register",balance:5000,currency:"AED",is_test:true});
+    const acc2=await ins("accounts",{type:"bank",name:"[TEST] Bank ADCB",bank_name:"ADCB",balance:25000,currency:"AED",is_test:true});
+    const acc3=await ins("accounts",{type:"credit",name:"[TEST] Credit Card",balance:1200,currency:"AED",credit_limit:10000,is_test:true});
+    if(acc1)S.accounts.push(acc1);if(acc2)S.accounts.push(acc2);if(acc3)S.accounts.push(acc3);
+    created+=3;
+    
+    // 2. Customers
+    const testCusts=[
+      {name:"[TEST] Ahmad Trading LLC",customer_code:"TEST-001",phone:"+971501234567",email:"ahmad@test.com",trn_number:"100123456700001",address:"Dubai, UAE",credit_limit_amount:20000,notes:"Test customer - VIP",is_test:true},
+      {name:"[TEST] Fatima Store",customer_code:"TEST-002",phone:"+971507654321",email:"fatima@test.com",address:"Sharjah",credit_limit_amount:10000,is_test:true},
+      {name:"[TEST] Khalid Restaurant",customer_code:"TEST-003",phone:"+971509876543",address:"Abu Dhabi",is_test:true},
+      {name:"[TEST] Sara Boutique",customer_code:"TEST-004",phone:"+971501112222",is_test:true},
+      {name:"[TEST] Ali General Trading",customer_code:"TEST-005",phone:"+971503334444",trn_number:"100987654300001",is_test:true},
+    ];
+    const custs=[];
+    for(const c of testCusts){const d=await ins("customers",c);if(d){custs.push(d);S.customers.push(d);created++;}}
+    
+    // 3. Suppliers
+    const testSupps=[
+      {name:"[TEST] Global Supply Co",phone:"+971504445555",trn_number:"100111122200001",notes:"Best prices",is_test:true},
+      {name:"[TEST] Quick Wholesale",phone:"+971505556666",is_test:true},
+      {name:"[TEST] City Distributors",phone:"+971506667777",is_test:true},
+    ];
+    const supps=[];
+    for(const s of testSupps){const d=await ins("suppliers",s);if(d){supps.push(d);S.suppliers.push(d);created++;}}
+    
+    // 4. Products
+    const testProds=[
+      {name:"[TEST] iPhone Cable",sku:"TST-001",sell_price:25,cost_price:10,stock:50,reorder_level:10,is_test:true},
+      {name:"[TEST] USB Hub",sku:"TST-002",sell_price:80,cost_price:35,stock:30,reorder_level:5,is_test:true},
+      {name:"[TEST] Wireless Mouse",sku:"TST-003",sell_price:120,cost_price:60,stock:25,reorder_level:5,is_test:true},
+      {name:"[TEST] Keyboard",sku:"TST-004",sell_price:200,cost_price:100,stock:15,reorder_level:5,is_test:true},
+      {name:"[TEST] Headphones",sku:"TST-005",sell_price:350,cost_price:180,stock:20,reorder_level:5,is_test:true},
+      {name:"[TEST] Monitor 24in",sku:"TST-006",sell_price:850,cost_price:500,stock:8,reorder_level:3,is_test:true},
+      {name:"[TEST] Laptop Stand",sku:"TST-007",sell_price:150,cost_price:75,stock:40,reorder_level:10,is_test:true},
+      {name:"[TEST] Power Bank",sku:"TST-008",sell_price:180,cost_price:80,stock:35,reorder_level:10,is_test:true},
+      {name:"[TEST] Phone Case",sku:"TST-009",sell_price:45,cost_price:15,stock:60,reorder_level:15,is_test:true},
+      {name:"[TEST] Screen Protector",sku:"TST-010",sell_price:30,cost_price:8,stock:100,reorder_level:20,is_test:true},
+    ];
+    const prods=[];
+    for(const p of testProds){const d=await ins("products",p);if(d){prods.push(d);S.products.push(d);created++;}}
+    
+    if(acc1&&acc2&&prods.length>=5&&custs.length>=3){
+      // 5. Sales Invoices
+      for(let i=1;i<=8;i++){
+        const cust=custs[i%custs.length];
+        const p1=prods[i%prods.length],p2=prods[(i+3)%prods.length];
+        const items=[
+          {product_id:p1.id,name:p1.name,qty:i,unit_price:p1.sell_price,total:i*p1.sell_price},
+          {product_id:p2.id,name:p2.name,qty:1,unit_price:p2.sell_price,total:p2.sell_price},
+        ];
+        const sub=items.reduce((s,it)=>s+it.total,0);
+        const tax=sub*0.05;const grand=sub+tax;
+        const d=new Date();d.setDate(d.getDate()-i*2);
+        const inv=await ins("invoices",{invoice_no:`TEST-INV-${String(i).padStart(4,"0")}`,date:d.toISOString().split("T")[0],customer_id:cust.id,currency:"AED",payment_method:i%3===0?"credit":"cash",tax_pct:5,disc_pct:0,subtotal:sub,tax_amount:tax,disc_amount:0,grand_total:grand,account_id:acc1.id,status:i%3===0?"submitted":"paid",items,is_test:true});
+        if(inv){S.invoices.unshift(inv);created++;}
+      }
+      
+      // 6. Purchase Invoices
+      if(supps.length>=2){
+        for(let i=1;i<=3;i++){
+          const sup=supps[i%supps.length];
+          const p=prods[i*2%prods.length];
+          const items=[{product_id:p.id,name:p.name,qty:10,unit_price:p.cost_price,total:10*p.cost_price}];
+          const sub=items[0].total;const grand=sub;
+          const d=new Date();d.setDate(d.getDate()-i*5);
+          const pinv=await ins("purchase_invoices",{invoice_no:`TEST-PINV-${String(i).padStart(4,"0")}`,supplier_id:sup.id,date:d.toISOString().split("T")[0],currency:"AED",payment_method:"cash",tax_pct:0,disc_pct:0,subtotal:sub,tax_amount:0,disc_amount:0,grand_total:grand,account_id:acc2.id,status:"submitted",items,is_test:true});
+          if(pinv){S.purchase_invoices.unshift(pinv);created++;}
+        }
+      }
+      
+      // 7. Quotations
+      for(let i=1;i<=2;i++){
+        const cust=custs[i%custs.length];
+        const p=prods[i%prods.length];
+        const items=[{product_id:p.id,name:p.name,qty:5,unit_price:p.sell_price,total:5*p.sell_price}];
+        const sub=items[0].total;
+        const quote=await ins("quotations",{quote_no:`TEST-QT-${String(i).padStart(4,"0")}`,customer_id:cust.id,date:today(),currency:"AED",tax_pct:5,disc_pct:0,subtotal:sub,tax_amount:sub*0.05,disc_amount:0,grand_total:sub*1.05,status:"open",items,is_test:true});
+        if(quote){S.quotations.unshift(quote);created++;}
+      }
+      
+      // 8. Vouchers
+      for(let i=1;i<=3;i++){
+        const cust=custs[i%custs.length];
+        const d=new Date();d.setDate(d.getDate()-i);
+        const v=await ins("vouchers",{voucher_no:`TEST-RV-${String(i).padStart(4,"0")}`,type:"receipt",date:d.toISOString().split("T")[0],party:cust.name,amount:500*i,currency:"AED",payment_mode:"cash",account_id:acc1.id,note:"Test receipt",is_test:true});
+        if(v){S.vouchers.unshift(v);created++;}
+      }
+      for(let i=1;i<=3;i++){
+        const sup=supps[i%supps.length];
+        const d=new Date();d.setDate(d.getDate()-i);
+        const v=await ins("vouchers",{voucher_no:`TEST-PV-${String(i).padStart(4,"0")}`,type:"payment",date:d.toISOString().split("T")[0],party:sup.name,amount:300*i,currency:"AED",payment_mode:"cash",account_id:acc1.id,note:"Test payment",is_test:true});
+        if(v){S.vouchers.unshift(v);created++;}
+      }
+    }
+    
+    // 9. Transactions
+    const cats=TCATS;
+    for(let i=1;i<=12;i++){
+      const d=new Date();d.setDate(d.getDate()-i);
+      const tx=await ins("transactions",{type:i%3===0?"income":"expense",amount:Math.floor(Math.random()*500)+50,currency:"AED",account_id:acc1?.id,category:cats[i%cats.length],note:`[TEST] Sample ${i}`,date:d.toISOString().split("T")[0],is_test:true});
+      if(tx){S.transactions.unshift(tx);created++;}
+    }
+    
+    // 10. Debts
+    const dbt1=await ins("debts",{type:"i_owe",party_name:"[TEST] John Smith",amount:1500,currency:"AED",date:today(),description:"Test loan",category:"personal",status:"open",is_test:true});
+    const dbt2=await ins("debts",{type:"they_owe",party_name:"[TEST] Maria Brown",amount:800,currency:"AED",date:today(),description:"Test credit",category:"friend",status:"open",is_test:true});
+    if(dbt1)S.debts.unshift(dbt1);if(dbt2)S.debts.unshift(dbt2);
+    created+=2;
+    
+    toast(`✓ Generated ${created} test records!`,"ok");
+    render(S.page);
+  }catch(e){console.error(e);toast("Error: "+e.message,"err");}
+  finally{unlockSave();}
+}
+
+async function clearTestData(){
+  if(!confirm("Delete ALL test data?\n\nThis only removes items tagged as TEST.\nYour real data will be kept safe."))return;
+  if(!lockSave())return;
+  let deleted=0;
+  try{
+    toast("Clearing test data...","info");
+    const tables=["transactions","vouchers","invoices","purchase_invoices","quotations","debts","products","customers","suppliers","accounts"];
+    for(const table of tables){
+      const {data:rows}=await sb.from(table).select("id").eq("is_test",true);
+      if(rows&&rows.length){
+        for(const r of rows){await del(table,r.id);deleted++;}
+      }
+    }
+    // Reload to refresh state
+    if(S.user)await loadAll(S.user);
+    toast(`✓ Deleted ${deleted} test records`,"ok");
+    render(S.page);
+  }catch(e){console.error(e);toast("Error: "+e.message,"err");}
+  finally{unlockSave();}
+}
+
+async function clearAllData(){
+  if(!confirm("⚠️ DELETE EVERYTHING?\n\nThis removes ALL your data:\n• All invoices, vouchers, transactions\n• All customers, suppliers, products\n• All accounts and balances\n• Everything!\n\nThis CANNOT be undone."))return;
+  const confirm2=prompt('Type "DELETE EVERYTHING" to confirm:');
+  if(confirm2!=="DELETE EVERYTHING"){toast("Cancelled","info");return;}
+  if(!lockSave())return;
+  let deleted=0;
+  try{
+    toast("Deleting all data...","info");
+    const tables=["transactions","vouchers","invoices","purchase_invoices","quotations","debts","cheques_in","cheques_out","products","customers","suppliers","accounts","budgets","goals","recurring_expenses"];
+    for(const table of tables){
+      const {data:rows}=await sb.from(table).select("id");
+      if(rows&&rows.length){
+        for(const r of rows){await del(table,r.id);deleted++;}
+      }
+    }
+    if(S.user)await loadAll(S.user);
+    localStorage.removeItem("lockedUntil");
+    toast(`✓ Deleted ${deleted} records. Fresh start!`,"ok");
+    render(S.page);
+  }catch(e){console.error(e);toast("Error: "+e.message,"err");}
+  finally{unlockSave();}
+}
+
 // Date filter UI and logic
 function dateFilterRange(){
   const tod=today();
@@ -535,12 +939,14 @@ function rDash(){
   const maxV=Math.max(...last7.map(x=>x.v),1);
   const chartHTML=`<div class="chart-bar">${last7.map(x=>`<div class="chart-col"><div class="chart-col-bar" style="height:${(x.v/maxV)*100}%;"></div><div class="chart-col-label">${x.d}</div></div>`).join("")}</div>`;
 
-  const recentHTML=S.transactions.slice(0,5).map(tx=>`
-    <div class="list-item" onclick="nav('transactions')">
-      <div class="list-icon" style="background:${tx.type==="income"?"var(--green-dim)":"var(--red-dim)"};color:${tx.type==="income"?"var(--green)":"var(--red)"};">${tx.type==="income"?"↑":"↓"}</div>
-      <div class="list-content"><div class="list-title">${tx.note||tx.category||"—"}</div><div class="list-sub">${getAccName(tx.account_id)} · ${fmD(tx.date)}</div></div>
-      <div class="list-right"><div class="list-amount" style="color:${tx.type==="income"?"var(--green)":"var(--red)"};">${tx.type==="income"?"+":"−"}${fmA(tx.amount,tx.currency)}</div></div>
-    </div>`).join("")||`<div class="empty"><div class="empty-icon">📋</div><p>${t("noRecords")}</p></div>`;
+  const activity=getRecentActivity();
+  const recentHTML=activity.slice(0,8).map(a=>{
+    const onclick=a.type==="invoice"?`nav('invoices');setTimeout(()=>showInvDetail('${a.id}'),200)`:a.type==="voucher"?`nav('vouchers');setTimeout(()=>showVoucherDetail('${a.id}'),200)`:`nav('transactions')`;
+    return `<div class="list-item" onclick="${onclick}">
+      <div class="list-icon">${a.icon}</div>
+      <div class="list-content"><div class="list-title">${a.title}</div><div class="list-sub">${a.sub} · ${fmD(a.time)}</div></div>
+    </div>`;
+  }).join("")||`<div class="empty"><div class="empty-icon">📋</div><p>${t("noRecords")}</p></div>`;
 
   $("p-dashboard").innerHTML=`
     ${heroHTML}
@@ -558,7 +964,7 @@ function rDash(){
       <button class="btn btn-secondary" onclick="showAddTx()">⇄ ${t("transactions")}</button>
       <button class="btn btn-secondary" onclick="showAddInv()">🧾 ${t("invoices")}</button>
     </div></div>
-    <div class="card"><div class="card-head"><span class="card-title">${t("recentTx")}</span><button class="btn btn-xs btn-ghost" onclick="nav('transactions')">→</button></div>${recentHTML}</div>`;
+    <div class="card"><div class="card-head"><span class="card-title">📋 Recent Activity</span></div>${recentHTML}</div>`;
 }
 
 function generateInsights(){
@@ -698,7 +1104,10 @@ function showVoucher(type,editId){
       <div class="fg"><label class="fl">Reference #</label><input class="fc" id="vref" value="${v?.reference_no||""}" placeholder="Cheque/Bank ref"/></div>
     </div>
     <div class="fg"><label class="fl">${t("note")} (printed)</label><input class="fc" id="vnote" value="${v?.note||""}"/></div>
-    <div class="fg"><label class="fl">Internal Note (private)</label><textarea class="fc" id="vintnote" rows="2" placeholder="Only you see this">${v?.internal_note||""}</textarea></div>`,
+    <div class="fg"><label class="fl">Internal Note (private)</label><textarea class="fc" id="vintnote" rows="2" placeholder="Only you see this">${v?.internal_note||""}</textarea></div>
+    <div class="fg"><label class="fl">📷 Receipt Photo (URL)</label><input class="fc" id="vreceipt" value="${v?.receipt_url||""}" placeholder="Paste image URL or leave empty"/>
+      ${v?.receipt_url?`<div style="margin-top:8px;"><img src="${v.receipt_url}" style="max-width:100%;max-height:120px;border-radius:6px;cursor:pointer;" onclick="window.open('${v.receipt_url}','_blank')"/></div>`:""}
+    </div>`,
     `${editId?`<button class="btn btn-danger btn-sm" onclick="delVoucher('${editId}')">✕</button>`:""}
      <button class="btn btn-secondary" onclick="closeModal()">${t("cancel")}</button>
      <button class="btn btn-primary" onclick="saveVoucher('${type}','${editId||""}')">${t("save")}</button>`);
@@ -727,7 +1136,7 @@ async function saveVoucher(type,eid){
   }
   // Account is now required
   if(!accountId){toast("Please select an account","err");return;}
-  const row={voucher_no:vNo,type,date:vDate,party:$("vparty")?.value||"",amount:amt,currency:$("vcur")?.value||"AED",payment_mode:$("vpm")?.value||"cash",account_id:accountId,note:$("vnote")?.value||"",reference_no:$("vref")?.value||"",internal_note:$("vintnote")?.value||""};
+  const row={voucher_no:vNo,type,date:vDate,party:$("vparty")?.value||"",amount:amt,currency:$("vcur")?.value||"AED",payment_mode:$("vpm")?.value||"cash",account_id:accountId,note:$("vnote")?.value||"",reference_no:$("vref")?.value||"",internal_note:$("vintnote")?.value||"",receipt_url:$("vreceipt")?.value||""};
   if(eid){
     await upd("vouchers",eid,row);
     const i=S.vouchers.findIndex(x=>x.id===eid);if(i>=0)S.vouchers[i]={...S.vouchers[i],...row};
@@ -1723,12 +2132,13 @@ function showAddCustomer(eid){
       <div class="fg"><label class="fl">Email</label><input class="fc" id="ce" value="${c?.email||""}"/></div>
       <div class="fg"><label class="fl">${t("phone")}</label><input class="fc" id="cph" value="${c?.phone||""}"/></div>
     </div>
-    <div class="fg"><label class="fl">${t("address")}</label><input class="fc" id="cadr" value="${c?.address||""}"/></div>`,
+    <div class="fg"><label class="fl">${t("address")}</label><input class="fc" id="cadr" value="${c?.address||""}"/></div>
+    <div class="fg"><label class="fl">📝 Internal Notes</label><textarea class="fc" id="cnotes" rows="3" placeholder="e.g. Pays late, prefers cash, VIP customer...">${c?.notes||""}</textarea></div>`,
     `${eid?`<button class="btn btn-danger btn-sm" onclick="delCust('${eid}')">✕</button>`:""}<button class="btn btn-secondary" onclick="closeModal()">${t("cancel")}</button><button class="btn btn-primary" onclick="saveCust('${eid||""}')">${t("save")}</button>`);
 }
 async function saveCust(eid){
   const name=$("cn")?.value?.trim();if(!name){toast("Name required","err");return;}
-  const row={name,customer_code:$("cc")?.value||nextCustomerCode(),trn_number:$("ctrn")?.value||"",credit_limit_amount:+$("cclim")?.value||0,email:$("ce")?.value||"",phone:$("cph")?.value||"",address:$("cadr")?.value||""};
+  const row={name,customer_code:$("cc")?.value||nextCustomerCode(),trn_number:$("ctrn")?.value||"",credit_limit_amount:+$("cclim")?.value||0,email:$("ce")?.value||"",phone:$("cph")?.value||"",address:$("cadr")?.value||"",notes:$("cnotes")?.value||""};
   if(eid){await upd("customers",eid,row);const i=S.customers.findIndex(x=>x.id===eid);if(i>=0)S.customers[i]={...S.customers[i],...row};}
   else{const d=await ins("customers",row);if(!d)return;S.customers.push(d);}
   closeModal(true);toast(t("saved"),"ok");render("customers");
@@ -1757,12 +2167,13 @@ function showAddSupp(eid){
       <div class="fg"><label class="fl">Email</label><input class="fc" id="seml" value="${s?.email||""}"/></div>
       <div class="fg"><label class="fl">${t("phone")}</label><input class="fc" id="sph" value="${s?.phone||""}"/></div>
     </div>
-    <div class="fg"><label class="fl">${t("address")}</label><input class="fc" id="sadr" value="${s?.address||""}"/></div>`,
+    <div class="fg"><label class="fl">${t("address")}</label><input class="fc" id="sadr" value="${s?.address||""}"/></div>
+    <div class="fg"><label class="fl">📝 Internal Notes</label><textarea class="fc" id="snotes" rows="3" placeholder="e.g. Best prices, delivers fast...">${s?.notes||""}</textarea></div>`,
     `${eid?`<button class="btn btn-danger btn-sm" onclick="delSupp('${eid}')">✕</button>`:""}<button class="btn btn-secondary" onclick="closeModal()">${t("cancel")}</button><button class="btn btn-primary" onclick="saveSupp('${eid||""}')">${t("save")}</button>`);
 }
 async function saveSupp(eid){
   const name=$("sn")?.value?.trim();if(!name){toast("Name?","err");return;}
-  const row={name,trn_number:$("strn")?.value||"",email:$("seml")?.value||"",phone:$("sph")?.value||"",address:$("sadr")?.value||""};
+  const row={name,trn_number:$("strn")?.value||"",email:$("seml")?.value||"",phone:$("sph")?.value||"",address:$("sadr")?.value||"",notes:$("snotes")?.value||""};
   if(eid){await upd("suppliers",eid,row);const i=S.suppliers.findIndex(x=>x.id===eid);if(i>=0)S.suppliers[i]={...S.suppliers[i],...row};}
   else{const d=await ins("suppliers",row);if(!d)return;S.suppliers.push(d);}
   closeModal(true);toast(t("saved"),"ok");render("suppliers");
@@ -2855,7 +3266,15 @@ function rSet(){
     </div></div>
     <div class="card"><div class="card-head"><span class="card-title">${t("data")}</span></div><div class="card-body" style="display:flex;gap:8px;flex-wrap:wrap;">
       <button class="btn btn-secondary btn-sm" onclick="exportJSON()">📦 ${t("backup")}</button>
+      <button class="btn btn-primary btn-sm" onclick="exportBackup()">📥 Export Backup (JSON)</button>
+      <button class="btn btn-secondary btn-sm" onclick="showImportDialog()">📤 Import Backup</button>
       <button class="btn btn-amber btn-sm" onclick="recalcBalances()">🔄 Fix Balances</button>
+      <button class="btn btn-secondary btn-sm" onclick="showQuickStats()">📊 Quick Stats</button>
+    </div></div>
+    <div class="card"><div class="card-head"><span class="card-title">🧪 Testing & Cleanup</span></div><div class="card-body" style="display:flex;gap:8px;flex-wrap:wrap;">
+      <button class="btn btn-success btn-sm" onclick="generateTestData()">📝 Generate Test Data</button>
+      <button class="btn btn-amber btn-sm" onclick="clearTestData()">🗑️ Clear Test Data Only</button>
+      <button class="btn btn-danger btn-sm" onclick="clearAllData()">⚠️ Clear ALL Data</button>
     </div></div>
     <div class="card"><div class="card-head"><span class="card-title">Security & Audit</span></div><div class="card-body" style="display:flex;gap:8px;flex-wrap:wrap;">
       <button class="btn btn-secondary btn-sm" onclick="showAuditLog()">📋 Activity Log</button>
@@ -2948,6 +3367,8 @@ function buildShell(){
       <button class="ham" onclick="toggleSidebar()">☰</button>
       <div class="t-logo"><div class="t-logo-icon">F</div><span>${t("app")}</span></div>
       <div class="t-right">
+        <button class="t-refresh" onclick="showGlobalSearch()" title="Search Everywhere">🔍</button>
+        <button class="t-refresh" onclick="showCalculator()" title="Calculator">🧮</button>
         <button class="t-refresh" onclick="refreshApp()">↻</button>
         <button class="t-refresh" onclick="toggleTheme()" title="Theme">${S.theme==="light"?"🌙":"☀️"}</button>
         <div class="lang-tog">
