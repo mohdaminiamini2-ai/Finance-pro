@@ -1291,11 +1291,21 @@ async function delVoucher(id){
   const v=S.vouchers.find(x=>x.id===id);if(!v)return;
   if(isLocked(v.date)){toast("Cannot delete: period is locked","err");return;}
   if(!confirm(`Delete ${v.voucher_no}? This will also remove the related transaction and reverse the balance.`))return;
-  // Reverse account balance
+  // Reverse account balance (must match the original save logic, but reversed)
   if(v.account_id){
     const acc=getAcc(v.account_id);
     if(acc){
-      const reverseAmt=v.type==="receipt"?-v.amount:v.amount;
+      const isCredit=acc.type==="credit";
+      // Original save:
+      //   normal: receipt = +amt, payment = -amt
+      //   credit: receipt = -amt, payment = +amt
+      // Reverse (opposite sign):
+      let reverseAmt;
+      if(isCredit){
+        reverseAmt=v.type==="receipt"?v.amount:-v.amount;
+      }else{
+        reverseAmt=v.type==="receipt"?-v.amount:v.amount;
+      }
       const newBal=(acc.balance||0)+reverseAmt;
       await upd("accounts",v.account_id,{balance:newBal});
       acc.balance=newBal;
@@ -1592,10 +1602,10 @@ async function completeCheckout(method){
   if(method!=="credit"&&accId){
     const acc=getAcc(accId);
     if(acc){
-      // Credit card logic: reverse for credit accounts
       const isCredit=acc.type==="credit";
-      const delta=isCredit?-total:total; // For credit card sale: this would be unusual; assume normal increase
-      acc.balance=(acc.balance||0)+total;
+      // For credit card: sale on card = pay down (decrease debt). Normal: increase balance.
+      const delta=isCredit?-total:total;
+      acc.balance=(acc.balance||0)+delta;
       await upd("accounts",accId,{balance:acc.balance});
     }
     const tx=await ins("transactions",{type:"income",amount:total,currency:S.currency,account_id:accId,category:"sales",note:invNo,date:today()});
@@ -1751,9 +1761,21 @@ async function saveTx(){
       // Deposit to destination
       const toTx=await ins("transactions",{type:"income",amount:amt,currency:cur,account_id:toId,category:"transfer",note:`Transfer from ${fromAcc.name}${note?" - "+note:""}`,date});
       if(toTx)S.transactions.unshift(toTx);
-      // Update balances
-      if(fromAcc){fromAcc.balance=(fromAcc.balance||0)-amt;await upd("accounts",fromId,{balance:fromAcc.balance});}
-      if(toAcc){toAcc.balance=(toAcc.balance||0)+amt;await upd("accounts",toId,{balance:toAcc.balance});}
+      // Update balances with credit card logic
+      if(fromAcc){
+        const isCredit=fromAcc.type==="credit";
+        // Withdraw from credit card = increase debt (+); from normal = decrease (-)
+        const delta=isCredit?amt:-amt;
+        fromAcc.balance=(fromAcc.balance||0)+delta;
+        await upd("accounts",fromId,{balance:fromAcc.balance});
+      }
+      if(toAcc){
+        const isCredit=toAcc.type==="credit";
+        // Deposit to credit card = pay down debt (-); to normal = increase (+)
+        const delta=isCredit?-amt:amt;
+        toAcc.balance=(toAcc.balance||0)+delta;
+        await upd("accounts",toId,{balance:toAcc.balance});
+      }
       closeModal(true);toast("Transfer completed ✓","ok");render(S.page);
       return;
     }
@@ -1761,7 +1783,22 @@ async function saveTx(){
     const accId=$("txacc")?.value||null;
     const row={type,amount:amt,currency:cur,account_id:accId,category:$("txcat")?.value,note,date};
     const d=await ins("transactions",row);if(!d)return;S.transactions.unshift(d);
-    if(accId){const acc=getAcc(accId);if(acc){const nb=(acc.balance||0)+(type==="income"?amt:-amt);await upd("accounts",accId,{balance:nb});acc.balance=nb;}}
+    if(accId){
+      const acc=getAcc(accId);
+      if(acc){
+        const isCredit=acc.type==="credit";
+        // Credit card: income = pay down (-), expense = purchase (+)
+        // Normal: income = +, expense = -
+        let delta;
+        if(isCredit){
+          delta=type==="income"?-amt:amt;
+        }else{
+          delta=type==="income"?amt:-amt;
+        }
+        const nb=(acc.balance||0)+delta;
+        await upd("accounts",accId,{balance:nb});acc.balance=nb;
+      }
+    }
     closeModal(true);toast(t("saved"),"ok");render(S.page);
   }finally{unlockSave();}
 }
@@ -1771,31 +1808,71 @@ async function delTx(id){
   // Check if linked to voucher/invoice via note
   const note=tx.note||"";
   let linkedV=null,linkedI=null;
-  const vMatch=note.match(/^(RV|PV)-\d+/);
+  const vMatch=note.match(/(RV|PV)-\d+/);
   if(vMatch)linkedV=S.vouchers.find(v=>v.voucher_no===vMatch[0]);
-  const iMatch=note.match(/^(INV|POS)-\d+/);
+  const iMatch=note.match(/(INV|POS)-\d+/);
   if(iMatch)linkedI=S.invoices.find(i=>i.invoice_no===iMatch[0]);
   
   let msg=t("confirmDel");
-  if(linkedV)msg=`This transaction is linked to ${linkedV.voucher_no}. Delete both?`;
+  if(linkedV)msg=`This transaction is linked to ${linkedV.voucher_no}. Delete both (this will reverse the balance)?`;
   if(linkedI)msg=`This transaction is linked to ${linkedI.invoice_no}. Delete both?`;
   if(!confirm(msg))return;
   
-  // Reverse balance
-  if(tx.account_id){
-    const acc=getAcc(tx.account_id);
-    if(acc){
-      const reverseAmt=tx.type==="income"?-tx.amount:tx.amount;
-      const newBal=(acc.balance||0)+reverseAmt;
-      await upd("accounts",tx.account_id,{balance:newBal});
-      acc.balance=newBal;
+  // If linked to voucher: reverse using voucher logic (handles credit card)
+  // If linked to invoice: reverse using invoice amount
+  // If standalone: reverse using transaction
+  if(linkedV){
+    // Reverse based on voucher type and account type
+    if(linkedV.account_id){
+      const acc=getAcc(linkedV.account_id);
+      if(acc){
+        const isCredit=acc.type==="credit";
+        let reverseAmt;
+        if(isCredit){
+          reverseAmt=linkedV.type==="receipt"?linkedV.amount:-linkedV.amount;
+        }else{
+          reverseAmt=linkedV.type==="receipt"?-linkedV.amount:linkedV.amount;
+        }
+        const newBal=(acc.balance||0)+reverseAmt;
+        await upd("accounts",linkedV.account_id,{balance:newBal});
+        acc.balance=newBal;
+      }
+    }
+    // Delete voucher
+    await del("vouchers",linkedV.id);
+    S.vouchers=S.vouchers.filter(x=>x.id!==linkedV.id);
+  }else if(linkedI){
+    // Reverse invoice payment
+    if(linkedI.account_id&&linkedI.status==="paid"){
+      const acc=getAcc(linkedI.account_id);
+      if(acc){
+        const isCredit=acc.type==="credit";
+        const reverseAmt=isCredit?(linkedI.grand_total||0):-(linkedI.grand_total||0);
+        const newBal=(acc.balance||0)+reverseAmt;
+        await upd("accounts",linkedI.account_id,{balance:newBal});
+        acc.balance=newBal;
+      }
+    }
+    await del("invoices",linkedI.id);
+    S.invoices=S.invoices.filter(x=>x.id!==linkedI.id);
+  }else{
+    // Standalone transaction - reverse with credit card support
+    if(tx.account_id){
+      const acc=getAcc(tx.account_id);
+      if(acc){
+        const isCredit=acc.type==="credit";
+        let reverseAmt;
+        if(isCredit){
+          reverseAmt=tx.type==="income"?tx.amount:-tx.amount;
+        }else{
+          reverseAmt=tx.type==="income"?-tx.amount:tx.amount;
+        }
+        const newBal=(acc.balance||0)+reverseAmt;
+        await upd("accounts",tx.account_id,{balance:newBal});
+        acc.balance=newBal;
+      }
     }
   }
-  
-  // Delete linked voucher
-  if(linkedV){await del("vouchers",linkedV.id);S.vouchers=S.vouchers.filter(x=>x.id!==linkedV.id);}
-  // Delete linked invoice
-  if(linkedI){await del("invoices",linkedI.id);S.invoices=S.invoices.filter(x=>x.id!==linkedI.id);}
   
   await del("transactions",id);S.transactions=S.transactions.filter(x=>x.id!==id);
   toast(t("deleted"),"info");render(S.page);
@@ -1983,26 +2060,91 @@ async function saveInv(status){
       }
     }
     const pm=$("invpm")?.value||"cash";
-    const row={invoice_no:invNo,date:invDate,due_date:$("invdue")?.value||null,customer_id:custId,currency:S.currency,payment_method:pm,tax_pct:taxP,disc_pct:discP,subtotal:sub,tax_amount:tax,disc_amount:disc,grand_total:grand,note:"",account_id:$("invacc")?.value||null,status,items:S.invItems,reference_no:$("invref")?.value||"",internal_note:$("invintnote")?.value||""};
+    // Smart status: if paid by cash/card (not credit), mark as paid immediately
+    const finalStatus=status==="submitted"&&pm!=="credit"?"paid":status;
+    const row={invoice_no:invNo,date:invDate,due_date:$("invdue")?.value||null,customer_id:custId,currency:S.currency,payment_method:pm,tax_pct:taxP,disc_pct:discP,subtotal:sub,tax_amount:tax,disc_amount:disc,grand_total:grand,note:"",account_id:$("invacc")?.value||null,status:finalStatus,items:S.invItems,reference_no:$("invref")?.value||"",internal_note:$("invintnote")?.value||""};
     const d=await ins("invoices",row);if(!d)return;
     S.invoices.unshift(d);
-    // Decrement stock for products
-    for(const it of S.invItems){
-      if(it.product_id){
-        const p=S.products.find(x=>x.id===it.product_id);
-        if(p){p.stock=Math.max(0,(p.stock||0)-it.qty);await upd("products",p.id,{stock:p.stock});}
+    // Decrement stock for products (only if submitted/paid, not draft)
+    if(finalStatus!=="draft"){
+      for(const it of S.invItems){
+        if(it.product_id){
+          const p=S.products.find(x=>x.id===it.product_id);
+          if(p){p.stock=Math.max(0,(p.stock||0)-it.qty);await upd("products",p.id,{stock:p.stock});}
+        }
       }
     }
-    if(status==="submitted"&&pm!=="credit"&&row.account_id){
-      const acc=getAcc(row.account_id);if(acc){acc.balance=(acc.balance||0)+grand;await upd("accounts",row.account_id,{balance:acc.balance});}
+    // Only update balance if invoice is PAID (not submitted with credit)
+    if(finalStatus==="paid"&&row.account_id){
+      const acc=getAcc(row.account_id);
+      if(acc){
+        const isCredit=acc.type==="credit";
+        // Sale paid to credit card: pay down debt (-); paid to normal: increase balance (+)
+        const delta=isCredit?-grand:grand;
+        acc.balance=(acc.balance||0)+delta;
+        await upd("accounts",row.account_id,{balance:acc.balance});
+      }
       const tx=await ins("transactions",{type:"income",amount:grand,currency:S.currency,account_id:row.account_id,category:"sales",note:row.invoice_no,date:row.date});
       if(tx)S.transactions.unshift(tx);
     }
     closeModal(true);toast(t("saved"),"ok");render("invoices");
   }finally{unlockSave();}
 }
-async function markInvPaid(id){await upd("invoices",id,{status:"paid"});const i=S.invoices.find(x=>x.id===id);if(i)i.status="paid";toast(t("saved"),"ok");render(S.page);}
-async function delInv(id){if(!confirm(t("confirmDel")))return;await del("invoices",id);S.invoices=S.invoices.filter(x=>x.id!==id);toast(t("deleted"),"info");render("invoices");}
+async function markInvPaid(id){
+  const inv=S.invoices.find(x=>x.id===id);
+  if(!inv)return;
+  if(inv.status==="paid"){toast("Already paid","info");return;}
+  // Update balance if account is set
+  if(inv.account_id){
+    const acc=getAcc(inv.account_id);
+    if(acc){
+      const isCredit=acc.type==="credit";
+      const delta=isCredit?-(inv.grand_total||0):(inv.grand_total||0);
+      acc.balance=(acc.balance||0)+delta;
+      await upd("accounts",inv.account_id,{balance:acc.balance});
+    }
+    // Create transaction
+    const tx=await ins("transactions",{type:"income",amount:inv.grand_total||0,currency:inv.currency,account_id:inv.account_id,category:"sales",note:inv.invoice_no,date:today()});
+    if(tx)S.transactions.unshift(tx);
+  }
+  await upd("invoices",id,{status:"paid"});
+  inv.status="paid";
+  toast(t("saved"),"ok");render(S.page);
+}
+async function delInv(id){
+  const inv=S.invoices.find(x=>x.id===id);
+  if(!inv)return;
+  if(isLocked(inv.date)){toast("Period locked","err");return;}
+  if(!confirm(`Delete ${inv.invoice_no}? This will reverse balance and restore stock.`))return;
+  // Reverse balance if was paid
+  if(inv.status==="paid"&&inv.account_id){
+    const acc=getAcc(inv.account_id);
+    if(acc){
+      const isCredit=acc.type==="credit";
+      // Reverse: paid sale to credit was -grand (pay down), reverse = +grand (re-add debt)
+      // paid sale to normal was +grand, reverse = -grand
+      const reverseDelta=isCredit?(inv.grand_total||0):-(inv.grand_total||0);
+      acc.balance=(acc.balance||0)+reverseDelta;
+      await upd("accounts",inv.account_id,{balance:acc.balance});
+    }
+  }
+  // Restore stock if was submitted/paid (not draft)
+  if(inv.status!=="draft"){
+    for(const it of(inv.items||[])){
+      if(it.product_id){
+        const p=S.products.find(x=>x.id===it.product_id);
+        if(p){p.stock=(p.stock||0)+it.qty;await upd("products",p.id,{stock:p.stock});}
+      }
+    }
+  }
+  // Delete linked transactions
+  const linkedTx=S.transactions.filter(tx=>(tx.note||"")===inv.invoice_no);
+  for(const tx of linkedTx){await del("transactions",tx.id);}
+  S.transactions=S.transactions.filter(tx=>(tx.note||"")!==inv.invoice_no);
+  await del("invoices",id);
+  S.invoices=S.invoices.filter(x=>x.id!==id);
+  toast(t("deleted"),"info");render("invoices");
+}
 function showInvDetail(id){
   const inv=S.invoices.find(x=>x.id===id);if(!inv)return;
   // Calculate profit per item if product_id linked
@@ -3186,7 +3328,16 @@ async function runRecurringNow(){
     const tx=await ins("transactions",{type:"expense",amount:r.amount,currency:r.currency,account_id:r.account_id,category:r.category,note:`[Recurring] ${r.name}`,date:txd});
     if(tx){
       S.transactions.unshift(tx);
-      if(r.account_id){const acc=getAcc(r.account_id);if(acc){acc.balance=(acc.balance||0)-r.amount;await upd("accounts",r.account_id,{balance:acc.balance});}}
+      if(r.account_id){
+        const acc=getAcc(r.account_id);
+        if(acc){
+          const isCredit=acc.type==="credit";
+          // Expense on credit card = increase debt (+); on normal = decrease (-)
+          const delta=isCredit?r.amount:-r.amount;
+          acc.balance=(acc.balance||0)+delta;
+          await upd("accounts",r.account_id,{balance:acc.balance});
+        }
+      }
       await upd("recurring_expenses",r.id,{last_run:tod});
       r.last_run=tod;
       added++;
